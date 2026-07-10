@@ -5,12 +5,14 @@ import os
 from datetime import datetime
 import uuid
 import altair as alt
+import gspread
+from google.oauth2.service_account import Credentials
 
 # ==========================================
 # 1. 常數與多維度課表設定
 # ==========================================
-DATA_FILE = "health_data.json"
 MEAL_TYPES = ["早餐", "午餐", "練前餐", "練後餐", "晚餐", "宵夜"]
+SHEET_NAME = "WeGoGYM_Database" # 雲端資料庫名稱
 
 WORKOUT_MUSCLE_MAPPING = {
     "Chest Day": ["Chest", "Triceps", "Shoulders"],
@@ -58,30 +60,104 @@ ROUTINE_PLANS = {
 }
 
 # ==========================================
-# 2. 系統初始化與資料庫操作
+# 2. 雲端資料庫串接 (取代原本的 JSON 存取)
 # ==========================================
+@st.cache_resource
+def get_gsheet_client():
+    creds = Credentials.from_service_account_info(
+        st.secrets["gcp_service_account"],
+        scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+    )
+    return gspread.authorize(creds)
+
+def ensure_worksheets(sh):
+    expected_sheets = ["Nutrition", "Workout", "CustomExercises"]
+    existing_sheets = [ws.title for ws in sh.worksheets()]
+    for ws_name in expected_sheets:
+        if ws_name not in existing_sheets:
+            sh.add_worksheet(title=ws_name, rows="1000", cols="20")
+
 def load_data():
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {"nutrition": [], "workout": [], "custom_exercises": {}}
+    gc = get_gsheet_client()
+    try:
+        sh = gc.open(SHEET_NAME)
+    except gspread.exceptions.SpreadsheetNotFound:
+        st.error(f"找不到名為 '{SHEET_NAME}' 的試算表。請確認已在雲端硬碟建立，並將權限設為『編輯者』共用給服務帳戶！")
+        st.stop()
+        
+    ensure_worksheets(sh)
+    
+    # 讀取飲食
+    ws_nutri = sh.worksheet("Nutrition")
+    nutri_records = ws_nutri.get_all_records()
+    for r in nutri_records:
+        r["foodName"] = r["foodName"] if r["foodName"] != "" else None
+        
+    # 讀取課表
+    ws_work = sh.worksheet("Workout")
+    work_records = ws_work.get_all_records()
+    for r in work_records:
+        r["duration"] = float(r["duration"]) if r["duration"] != "" else None
+        r["distance"] = float(r["distance"]) if r["distance"] != "" else None
+        r["notes"] = str(r["notes"]) if r["notes"] != "" else None
+        
+    # 讀取自訂動作
+    ws_custom = sh.worksheet("CustomExercises")
+    custom_records = ws_custom.get_all_records()
+    custom_dict = {}
+    for r in custom_records:
+        plan_day = r.get("plan_day")
+        ex = r.get("exercise_name")
+        if plan_day not in custom_dict:
+            custom_dict[plan_day] = []
+        custom_dict[plan_day].append(ex)
+
+    return {
+        "nutrition": nutri_records,
+        "workout": work_records,
+        "custom_exercises": custom_dict
+    }
+
+def update_worksheet(ws, data_list, default_headers):
+    ws.clear()
+    if not data_list:
+        ws.update([default_headers])
+        return
+    
+    headers = list(data_list[0].keys())
+    rows = []
+    for row_dict in data_list:
+        row = []
+        for h in headers:
+            val = row_dict.get(h)
+            row.append(val if val is not None else "")
+        rows.append(row)
+        
+    ws.update([headers] + rows)
 
 def save_data():
-    data_to_save = {
-        "nutrition": st.session_state.nutrition_entries,
-        "workout": st.session_state.workout_entries,
-        "custom_exercises": st.session_state.custom_exercises
-    }
-    with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(data_to_save, f, ensure_ascii=False, indent=4)
+    gc = get_gsheet_client()
+    sh = gc.open(SHEET_NAME)
+    
+    ws_nutri = sh.worksheet("Nutrition")
+    update_worksheet(ws_nutri, st.session_state.nutrition_entries, ["id", "date", "type", "foodName", "protein", "carbs", "fat", "calories"])
+    
+    ws_work = sh.worksheet("Workout")
+    update_worksheet(ws_work, st.session_state.workout_entries, ["id", "date", "dayType", "exercise", "weight", "sets", "reps", "distance", "duration", "notes"])
+    
+    ws_custom = sh.worksheet("CustomExercises")
+    custom_list = [{"plan_day": pd, "exercise_name": ex} for pd, ex_list in st.session_state.custom_exercises.items() for ex in ex_list]
+    update_worksheet(ws_custom, custom_list, ["plan_day", "exercise_name"])
 
+# 系統啟動與資料載入
 if "data_loaded" not in st.session_state:
-    data = load_data()
-    st.session_state.nutrition_entries = data.get("nutrition", [])
-    st.session_state.workout_entries = data.get("workout", [])
-    st.session_state.custom_exercises = data.get("custom_exercises", {})
-    st.session_state.active_routine = "4日力量與有氧 (目前)"
-    st.session_state.data_loaded = True
+    with st.spinner("🔄 正在與 Google 雲端資料庫同步中..."):
+        data = load_data()
+        st.session_state.nutrition_entries = data.get("nutrition", [])
+        st.session_state.workout_entries = data.get("workout", [])
+        st.session_state.custom_exercises = data.get("custom_exercises", {})
+        st.session_state.active_routine = "4日力量與有氧 (目前)"
+        st.session_state.data_loaded = True
 
 def get_today_str(): return datetime.now().strftime("%Y-%m-%d")
 
@@ -92,9 +168,6 @@ def get_last_workout_data(exercise_name):
             return w["weight"], w["sets"], w["reps"]
     return 0.0, 0, 0 
 
-# ==========================================
-# 3. 肌肉恢復計算邏輯
-# ==========================================
 def calculate_muscle_statuses():
     now = datetime.now()
     statuses = []
@@ -129,7 +202,7 @@ def calculate_muscle_statuses():
 # 主視圖
 # ==========================================
 st.set_page_config(page_title="We Go GYM", page_icon="🏋️", layout="centered")
-st.title("We Go GYM")
+st.title("We Go GYM ☁️") # 加上雲端符號標示升級成功
 
 tab_nutri, tab_work, tab_recover, tab_hist_nutri, tab_hist_work, tab_analytics = st.tabs([
     "🍃 飲食", "🏋️ 課表", "💪 恢復圖", "📊 飲食記錄", "🕒 重訓記錄", "📈 數據"
@@ -154,7 +227,7 @@ with tab_nutri:
                 "type": quick_meal, "foodName": "乳清蛋白",
                 "protein": 25.0, "carbs": 2.0, "fat": 1.5, "calories": 120.0
             })
-            save_data()
+            with st.spinner("同步至雲端中..."): save_data()
             st.success(f"已將乳清蛋白加入至 {quick_meal}！")
             st.rerun()
             
@@ -177,7 +250,7 @@ with tab_nutri:
                 "type": selected_meal, "foodName": input_food_name if input_food_name else None,
                 "protein": input_protein, "carbs": input_carbs, "fat": input_fat, "calories": input_calories
             })
-            save_data()
+            with st.spinner("同步至雲端中..."): save_data()
             st.success("已加入紀錄！")
             st.rerun()
 
@@ -206,7 +279,7 @@ with tab_nutri:
                 st.write(f"**{entry['calories']:.0f} kcal**")
                 if st.button("❌", key=f"del_nutri_{entry['id']}"):
                     st.session_state.nutrition_entries = [e for e in st.session_state.nutrition_entries if e["id"] != entry["id"]]
-                    save_data()
+                    with st.spinner("同步至雲端中..."): save_data()
                     st.rerun()
 
 # ==========================================
@@ -240,7 +313,7 @@ with tab_work:
                 st.session_state.custom_exercises[custom_key] = []
             if new_ex not in st.session_state.custom_exercises[custom_key] and new_ex not in base_exercises:
                 st.session_state.custom_exercises[custom_key].append(new_ex)
-                save_data()
+                with st.spinner("同步至雲端中..."): save_data()
                 st.rerun()
 
     last_w, last_s, last_r = get_last_workout_data(selected_ex)
@@ -270,7 +343,7 @@ with tab_work:
                     "weight": 0.0, "sets": 0, "reps": 0
                 }
                 st.session_state.workout_entries.append(entry)
-                save_data()
+                with st.spinner("同步至雲端中..."): save_data()
                 st.success("已加入有氧紀錄！")
                 
         else:
@@ -293,7 +366,7 @@ with tab_work:
                     "duration": None, "distance": None, "notes": None
                 }
                 st.session_state.workout_entries.append(entry)
-                save_data()
+                with st.spinner("同步至雲端中..."): save_data()
                 st.success("已加入重訓紀錄！")
 
     st.divider()
@@ -325,7 +398,7 @@ with tab_work:
                     with col_z:
                         if st.button("❌", key=f"del_work_{row['id']}"):
                             st.session_state.workout_entries = [e for e in st.session_state.workout_entries if e["id"] != row["id"]]
-                            save_data()
+                            with st.spinner("同步至雲端中..."): save_data()
                             st.rerun()
 
 # ==========================================
@@ -378,7 +451,7 @@ with tab_hist_nutri:
                     with col_y:
                         if st.button("❌", key=f"del_h_n_{row['id']}"):
                             st.session_state.nutrition_entries = [e for e in st.session_state.nutrition_entries if e["id"] != row["id"]]
-                            save_data()
+                            with st.spinner("同步至雲端中..."): save_data()
                             st.rerun()
 
 # ==========================================
@@ -411,11 +484,11 @@ with tab_hist_work:
                         with col_y:
                             if st.button("❌", key=f"del_h_w_{row['id']}"):
                                 st.session_state.workout_entries = [e for e in st.session_state.workout_entries if e["id"] != row["id"]]
-                                save_data()
+                                with st.spinner("同步至雲端中..."): save_data()
                                 st.rerun()
 
 # ==========================================
-# 9. 數據分析 (🔥 優化：支援日/週/月切換)
+# 9. 數據分析
 # ==========================================
 with tab_analytics:
     st.header("訓練總容量趨勢 (Total Volume)")
@@ -426,43 +499,31 @@ with tab_analytics:
             df_weights = df_w[df_w['weight'] > 0].copy()
             
             if not df_weights.empty:
-                # 建立 UI 切換按鈕
-                time_interval = st.radio(
-                    "選擇檢視區間：", 
-                    ["日 (Daily)", "週 (Weekly)", "月 (Monthly)"], 
-                    horizontal=True
-                )
+                time_interval = st.radio("選擇檢視區間：", ["日 (Daily)", "週 (Weekly)", "月 (Monthly)"], horizontal=True)
                 
-                # 將字串轉換為 Pandas DateTime 物件方便操作
                 df_weights['date_obj'] = pd.to_datetime(df_weights['date'].str[:10])
                 df_weights['volume'] = df_weights['weight'] * df_weights['sets'] * df_weights['reps']
                 
-                # 根據選擇動態轉換日期標籤
                 if time_interval == "日 (Daily)":
                     df_weights['period'] = df_weights['date_obj'].dt.strftime('%Y-%m-%d')
                     x_title = "日期"
                 elif time_interval == "週 (Weekly)":
-                    # 計算該日期所屬的「星期一」，方便辨識該週
                     df_weights['period'] = df_weights['date_obj'] - pd.to_timedelta(df_weights['date_obj'].dt.dayofweek, unit='d')
                     df_weights['period'] = df_weights['period'].dt.strftime('%Y-%m-%d (週一)')
                     x_title = "週度 (以週一為起點)"
-                else: # 月 (Monthly)
+                else: 
                     df_weights['period'] = df_weights['date_obj'].dt.strftime('%Y-%m')
                     x_title = "月份"
                 
-                # 根據新的 period 進行 Groupby 加總
                 vol_trend = df_weights.groupby('period')['volume'].sum().reset_index()
                 
                 chart = alt.Chart(vol_trend).mark_bar(color='#5C9DF5').encode(
                     x=alt.X('period:O', title=x_title, sort=None), 
                     y=alt.Y('volume:Q', title='總容量 (kg)'),
                     tooltip=[alt.Tooltip('period', title=x_title), alt.Tooltip('volume', title='總容量')]
-                ).properties(
-                    width=alt.Step(60) # 保持寬度，支援橫向捲動
-                )
+                ).properties(width=alt.Step(60))
                 
                 st.altair_chart(chart, use_container_width=True)
-                
                 st.caption("觀察重點：確保圖表呈現『漸進性超負荷』的緩步上升趨勢。")
             else:
                 st.write("目前尚無重量訓練數據可供分析。")
