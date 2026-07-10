@@ -60,7 +60,7 @@ ROUTINE_PLANS = {
 }
 
 # ==========================================
-# 2. 雲端資料庫串接與狀態初始化 (🔥 修復 KeyError)
+# 2. 雲端資料庫串接與狀態初始化 (🔥 新增 BodyMetrics 工作表)
 # ==========================================
 @st.cache_resource
 def get_gsheet_client():
@@ -71,7 +71,7 @@ def get_gsheet_client():
     return gspread.authorize(creds)
 
 def ensure_worksheets(sh):
-    expected_sheets = ["Nutrition", "Workout", "CustomExercises"]
+    expected_sheets = ["Nutrition", "Workout", "CustomExercises", "BodyMetrics"] # 加入身體數值表
     existing_sheets = [ws.title for ws in sh.worksheets()]
     for ws_name in expected_sheets:
         if ws_name not in existing_sheets:
@@ -95,6 +95,11 @@ def load_data():
         r["duration"] = float(r["duration"]) if r["duration"] != "" else None
         r["distance"] = float(r["distance"]) if r["distance"] != "" else None
         r["notes"] = str(r["notes"]) if r["notes"] != "" else None
+
+    body_records = sh.worksheet("BodyMetrics").get_all_records()
+    for r in body_records:
+         r["weight"] = float(r["weight"]) if r["weight"] != "" else None
+         r["body_fat"] = float(r["body_fat"]) if r["body_fat"] != "" else None
         
     custom_records = sh.worksheet("CustomExercises").get_all_records()
     custom_dict = {}
@@ -104,7 +109,7 @@ def load_data():
         if plan_day not in custom_dict: custom_dict[plan_day] = []
         custom_dict[plan_day].append(ex)
 
-    return {"nutrition": nutri_records, "workout": work_records, "custom_exercises": custom_dict}
+    return {"nutrition": nutri_records, "workout": work_records, "body_metrics": body_records, "custom_exercises": custom_dict}
 
 def update_worksheet(ws, data_list, default_headers):
     ws.clear()
@@ -123,12 +128,13 @@ def save_data():
     sh = gc.open(SHEET_NAME)
     update_worksheet(sh.worksheet("Nutrition"), st.session_state.nutrition_entries, ["id", "date", "type", "foodName", "protein", "carbs", "fat", "calories"])
     update_worksheet(sh.worksheet("Workout"), st.session_state.workout_entries, ["id", "date", "dayType", "exercise", "weight", "sets", "reps", "distance", "duration", "notes"])
+    update_worksheet(sh.worksheet("BodyMetrics"), st.session_state.body_entries, ["id", "date", "weight", "body_fat"])
     custom_list = [{"plan_day": pd, "exercise_name": ex} for pd, ex_list in st.session_state.custom_exercises.items() for ex in ex_list]
     update_worksheet(sh.worksheet("CustomExercises"), custom_list, ["plan_day", "exercise_name"])
 
-# 確保所有狀態都有初始值，防止 KeyError
 if "nutrition_entries" not in st.session_state: st.session_state.nutrition_entries = []
 if "workout_entries" not in st.session_state: st.session_state.workout_entries = []
+if "body_entries" not in st.session_state: st.session_state.body_entries = []
 if "custom_exercises" not in st.session_state: st.session_state.custom_exercises = {}
 if "active_routine" not in st.session_state: st.session_state.active_routine = "4日力量與有氧 (目前)"
 
@@ -137,6 +143,7 @@ if "data_loaded" not in st.session_state:
         data = load_data()
         st.session_state.nutrition_entries = data.get("nutrition", [])
         st.session_state.workout_entries = data.get("workout", [])
+        st.session_state.body_entries = data.get("body_metrics", [])
         st.session_state.custom_exercises = data.get("custom_exercises", {})
         st.session_state.data_loaded = True
 
@@ -149,7 +156,6 @@ def get_last_workout_data(exercise_name):
             return w["weight"], w["sets"], w["reps"]
     return 0.0, 0, 0 
 
-# Brzycki 1RM 核心預算公式
 def estimate_1rm(weight, reps):
     if reps <= 0: return 0.0
     if reps == 1: return weight
@@ -182,26 +188,23 @@ def calculate_muscle_statuses():
         statuses.append({"muscle": muscle, "latest_date": latest_date, "progress": progress, "remaining": remaining, "color": color})
     return statuses
 
-# ==========================================
-# 全域特殊事件檢查 (解鎖 PR 彩蛋機制)
-# ==========================================
 if "show_pr_balloons" in st.session_state and st.session_state.show_pr_balloons:
     st.balloons()
     st.success(st.session_state.new_pr_msg)
     st.session_state.show_pr_balloons = False
 
 # ==========================================
-# 主視圖介面
+# 主視圖介面 (🔥 擴充標籤頁)
 # ==========================================
 st.set_page_config(page_title="We Go GYM", page_icon="🏋️", layout="centered")
 st.title("We Go GYM ☁️")
 
-tab_nutri, tab_work, tab_recover, tab_hist_nutri, tab_hist_work, tab_analytics = st.tabs([
-    "🍃 飲食", "🏋️ 課表", "💪 恢復圖", "📊 飲食記錄", "🕒 重訓記錄", "📈 數據"
+tab_nutri, tab_work, tab_body, tab_recover, tab_hist, tab_analytics = st.tabs([
+    "🍃 飲食", "🏋️ 課表", "⚖️ 體重", "💪 恢復", "🕒 歷史", "📈 數據"
 ])
 
 # ==========================================
-# 4. 今日飲食 (🔥 修復 St.spinner)
+# 4. 今日飲食 
 # ==========================================
 with tab_nutri:
     st.header("新增攝取")
@@ -268,7 +271,7 @@ with tab_nutri:
                     st.rerun()
 
 # ==========================================
-# 5. 今日課表 (🔥 修復 St.spinner)
+# 5. 今日課表
 # ==========================================
 with tab_work:
     st.header("新增訓練動作")
@@ -323,7 +326,6 @@ with tab_work:
             if st.form_submit_button("加入課表") and input_sets > 0 and input_reps > 0 and selected_ex != "➕ 新增動作...":
                 entry_date = datetime.combine(selected_date_w, datetime.now().time()).isoformat()
                 
-                # 背景即時比對 1RM 是否突破歷史 PR 紀錄
                 history_df = pd.DataFrame(st.session_state.workout_entries)
                 highest_prev_1rm = 0.0
                 if not history_df.empty and 'exercise' in history_df.columns and 'weight' in history_df.columns:
@@ -371,6 +373,51 @@ with tab_work:
                             st.rerun()
 
 # ==========================================
+# 新增：身體數值紀錄分頁
+# ==========================================
+with tab_body:
+    st.header("記錄身體數據")
+    selected_date_b = st.date_input("📝 選擇紀錄日期", datetime.now().date(), key="body_date")
+    
+    # 尋找上次記錄作為預設值
+    last_w_body, last_bf = 70.0, 15.0
+    if st.session_state.body_entries:
+        sorted_body = sorted(st.session_state.body_entries, key=lambda x: x["date"], reverse=True)
+        if sorted_body:
+            last_w_body = sorted_body[0].get("weight", 70.0)
+            last_bf = sorted_body[0].get("body_fat", 15.0)
+
+    with st.form("body_form", clear_on_submit=True):
+        col1, col2 = st.columns(2)
+        with col1:
+            input_bw = st.number_input("體重 (kg)", min_value=30.0, max_value=200.0, step=0.1, value=float(last_w_body))
+        with col2:
+            input_bf = st.number_input("體脂率 (%) [選填]", min_value=0.0, max_value=60.0, step=0.1, value=float(last_bf))
+            
+        if st.form_submit_button("儲存數據"):
+            entry_date = datetime.combine(selected_date_b, datetime.now().time()).isoformat()
+            # 檢查是否同一天已有紀錄，若有則覆蓋
+            target_date_str = selected_date_b.strftime("%Y-%m-%d")
+            st.session_state.body_entries = [e for e in st.session_state.body_entries if not e["date"].startswith(target_date_str)]
+            
+            st.session_state.body_entries.append({
+                "id": str(uuid.uuid4()), "date": entry_date, "weight": input_bw, "body_fat": input_bf
+            })
+            with st.spinner("同步至雲端中..."): save_data()
+            st.success("身體數據已更新！")
+            st.rerun()
+            
+    st.divider()
+    st.subheader("近期體態變化")
+    if st.session_state.body_entries:
+        df_body = pd.DataFrame(st.session_state.body_entries)
+        df_body['date_str'] = df_body['date'].str[:10]
+        df_body = df_body.sort_values(by='date_str', ascending=False).head(5) # 只顯示最近 5 筆
+        st.dataframe(df_body[['date_str', 'weight', 'body_fat']].style.format({"weight": "{:.1f} kg", "body_fat": "{:.1f} %"}), hide_index=True, use_container_width=True)
+    else:
+        st.write("尚未有身體紀錄。")
+
+# ==========================================
 # 6. 身體恢復圖 
 # ==========================================
 with tab_recover:
@@ -390,54 +437,89 @@ with tab_recover:
         st.write("---")
 
 # ==========================================
-# 7. 飲食記錄 & 8. 重訓記錄 (🔥 修復 St.spinner)
+# 7. 歷史記錄 (合併為單一 Tab 節省空間)
 # ==========================================
-with tab_hist_nutri:
-    st.header("歷史飲食記錄")
-    if not st.session_state.nutrition_entries: st.write("尚未有任何飲食紀錄")
-    else:
-        df_nutri = pd.DataFrame(st.session_state.nutrition_entries)
-        df_nutri['date_str'] = df_nutri['date'].str[:10]
-        for date, group in df_nutri.groupby('date_str', sort=False):
-            with st.expander(f"📅 {date} | 總熱量: {group['calories'].sum():.0f} kcal", expanded=True):
-                st.markdown(f"**🔥 日總計 ➔ 碳水: {group['carbs'].sum():.1f}g | 蛋白質: {group['protein'].sum():.1f}g | 脂肪: {group['fat'].sum():.1f}g**")
-                st.divider()
-                for _, row in group.iterrows():
-                    col_x, col_y = st.columns([4, 1])
-                    with col_x:
-                        st.write(f"**{row['type']}**" + (f" - {row['foodName']}" if row.get('foodName') else "") + f" : {row['calories']:.0f} kcal")
-                        st.caption(f"碳水: {row['carbs']:.1f}g | 蛋白質: {row['protein']:.1f}g | 脂肪: {row['fat']:.1f}g")
-                    with col_y:
-                        if st.button("❌", key=f"del_h_n_{row['id']}"):
-                            st.session_state.nutrition_entries = [e for e in st.session_state.nutrition_entries if e["id"] != row["id"]]
-                            with st.spinner("同步至雲端中..."): save_data()
-                            st.rerun()
-
-with tab_hist_work:
-    st.header("歷史重訓記錄")
-    if not st.session_state.workout_entries: st.write("尚未有任何訓練紀錄")
-    else:
-        df_work_hist = pd.DataFrame(st.session_state.workout_entries)
-        df_work_hist['date_str'] = df_work_hist['date'].str[:10]
-        for date, group in df_work_hist.groupby('date_str', sort=False):
-            with st.expander(f"📅 {date} | {', '.join(group['dayType'].unique())}"):
-                for ex, ex_group in group.groupby('exercise'):
-                    st.write(f"**{ex}**")
-                    for _, row in ex_group.iterrows():
+with tab_hist:
+    hist_type = st.radio("選擇檢視歷史：", ["飲食紀錄", "重訓紀錄"], horizontal=True)
+    
+    if hist_type == "飲食紀錄":
+        if not st.session_state.nutrition_entries: st.write("尚未有任何飲食紀錄")
+        else:
+            df_nutri = pd.DataFrame(st.session_state.nutrition_entries)
+            df_nutri['date_str'] = df_nutri['date'].str[:10]
+            for date, group in df_nutri.groupby('date_str', sort=False):
+                with st.expander(f"📅 {date} | 總熱量: {group['calories'].sum():.0f} kcal"):
+                    st.markdown(f"**🔥 日總計 ➔ 碳水: {group['carbs'].sum():.1f}g | 蛋白質: {group['protein'].sum():.1f}g | 脂肪: {group['fat'].sum():.1f}g**")
+                    st.divider()
+                    for _, row in group.iterrows():
                         col_x, col_y = st.columns([4, 1])
                         with col_x:
-                            if row.get("duration") is not None: st.write(f"- ⏱️ {row['duration']:.0f} 分鐘" + (f" ({row['notes']})" if row.get('notes') else ""))
-                            else: st.write(f"- 🏋️ {row['weight']:.1f} kg | {int(row['sets'])} 組 x {int(row['reps'])} 下")
+                            st.write(f"**{row['type']}**" + (f" - {row['foodName']}" if row.get('foodName') else "") + f" : {row['calories']:.0f} kcal")
+                            st.caption(f"碳水: {row['carbs']:.1f}g | 蛋白質: {row['protein']:.1f}g | 脂肪: {row['fat']:.1f}g")
                         with col_y:
-                            if st.button("❌", key=f"del_h_w_{row['id']}"):
-                                st.session_state.workout_entries = [e for e in st.session_state.workout_entries if e["id"] != row["id"]]
+                            if st.button("❌", key=f"del_h_n_{row['id']}"):
+                                st.session_state.nutrition_entries = [e for e in st.session_state.nutrition_entries if e["id"] != row["id"]]
                                 with st.spinner("同步至雲端中..."): save_data()
                                 st.rerun()
+    else:
+        if not st.session_state.workout_entries: st.write("尚未有任何訓練紀錄")
+        else:
+            df_work_hist = pd.DataFrame(st.session_state.workout_entries)
+            df_work_hist['date_str'] = df_work_hist['date'].str[:10]
+            for date, group in df_work_hist.groupby('date_str', sort=False):
+                with st.expander(f"📅 {date} | {', '.join(group['dayType'].unique())}"):
+                    for ex, ex_group in group.groupby('exercise'):
+                        st.write(f"**{ex}**")
+                        for _, row in ex_group.iterrows():
+                            col_x, col_y = st.columns([4, 1])
+                            with col_x:
+                                if row.get("duration") is not None: st.write(f"- ⏱️ {row['duration']:.0f} 分鐘" + (f" ({row['notes']})" if row.get('notes') else ""))
+                                else: st.write(f"- 🏋️ {row['weight']:.1f} kg | {int(row['sets'])} 組 x {int(row['reps'])} 下")
+                            with col_y:
+                                if st.button("❌", key=f"del_h_w_{row['id']}"):
+                                    st.session_state.workout_entries = [e for e in st.session_state.workout_entries if e["id"] != row["id"]]
+                                    with st.spinner("同步至雲端中..."): save_data()
+                                    st.rerun()
 
 # ==========================================
-# 9. 數據分析 (🔥 修復 width="stretch" 警告)
+# 9. 數據分析 (🔥 新增：體重與熱量交叉分析雙軸圖)
 # ==========================================
 with tab_analytics:
+    st.header("⚖️ 體態與熱量交叉分析")
+    
+    has_nutri = bool(st.session_state.nutrition_entries)
+    has_body = bool(st.session_state.body_entries)
+    
+    if has_nutri and has_body:
+        df_n = pd.DataFrame(st.session_state.nutrition_entries)
+        df_n['date_str'] = df_n['date'].str[:10]
+        daily_cal = df_n.groupby('date_str')['calories'].sum().reset_index()
+        
+        df_b = pd.DataFrame(st.session_state.body_entries)
+        df_b['date_str'] = df_b['date'].str[:10]
+        
+        # 合併熱量與體重資料
+        merged_df = pd.merge(daily_cal, df_b[['date_str', 'weight']], on='date_str', how='outer').fillna(method='ffill').fillna(0)
+        
+        # 繪製 Altair 雙軸圖
+        base = alt.Chart(merged_df).encode(x=alt.X('date_str:O', title='日期'))
+        bar = base.mark_bar(opacity=0.6, color='#5C9DF5').encode(
+            y=alt.Y('calories:Q', title='攝取熱量 (kcal)'),
+            tooltip=['date_str', 'calories']
+        )
+        line = base.mark_line(color='#FF4B4B', point=True, strokeWidth=3).encode(
+            y=alt.Y('weight:Q', title='體重 (kg)', scale=alt.Scale(zero=False)),
+            tooltip=['date_str', 'weight']
+        )
+        
+        chart_dual = alt.layer(bar, line).resolve_scale(y='independent').properties(width=alt.Step(60))
+        st.altair_chart(chart_dual, use_container_width=True)
+        st.caption("觀察重點：紅線為體重趨勢，藍柱為熱量。可評估目前的熱量盈餘/缺口是否達到預期目標。")
+    else:
+        st.info("💡 需要同時擁有「飲食紀錄」與「體重紀錄」才能解鎖交叉分析圖表！")
+
+    st.divider()
+
     st.header("🏆 個人最高紀錄 (1RM PR 榮譽榜)")
     if st.session_state.workout_entries:
         df_all = pd.DataFrame(st.session_state.workout_entries)
@@ -450,14 +532,14 @@ with tab_analytics:
                 估算最大肌力_1RM=('estimated_1rm', 'max')
             ).reset_index()
             
-            st.dataframe(pr_summary.style.format({"最高極限重量": "{:.1f} kg", "估算最大肌力_1RM": "{:.1f} kg"}), width="stretch")
+            st.dataframe(pr_summary.style.format({"最高極限重量": "{:.1f} kg", "估算最大肌力_1RM": "{:.1f} kg"}), use_container_width=True)
         else:
             st.write("目前尚無重量訓練數據，快去建立第一筆 PR 吧！")
     else:
         st.write("目前尚無任何訓練數據。")
         
     st.divider()
-    st.header("訓練總容量趨勢 (Total Volume)")
+    st.header("🏋️ 訓練總容量趨勢 (Total Volume)")
     if st.session_state.workout_entries:
         df_w = pd.DataFrame(st.session_state.workout_entries)
         if 'weight' in df_w.columns and not df_w[df_w['weight'] > 0].empty:
@@ -481,5 +563,4 @@ with tab_analytics:
                 x=alt.X('period:O', title=x_title, sort=None), y=alt.Y('volume:Q', title='總容量 (kg)'),
                 tooltip=[alt.Tooltip('period', title=x_title), alt.Tooltip('volume', title='總容量')]
             ).properties(width=alt.Step(60))
-            
-            st.altair_chart(chart, width="stretch")
+            st.altair_chart(chart, use_container_width=True)
