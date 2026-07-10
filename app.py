@@ -215,7 +215,7 @@ with tab_nutri:
     with col_q1:
         quick_meal = st.selectbox("快速加入時段", MEAL_TYPES, index=3, label_visibility="collapsed")
     with col_q2:
-        if st.button("➕ 加入乳清蛋白 (120 kcal)"):
+        if st.button("➕ 加入乳清蛋白一匙 (120 kcal)"):
             entry_date = datetime.combine(selected_date_n, datetime.now().time()).isoformat()
             st.session_state.nutrition_entries.append({
                 "id": str(uuid.uuid4()), "date": entry_date, "type": quick_meal, "foodName": "乳清蛋白", "protein": 25.0, "carbs": 2.0, "fat": 1.5, "calories": 120.0
@@ -482,7 +482,7 @@ with tab_hist:
                                     st.rerun()
 
 # ==========================================
-# 9. 數據分析 (🔥 修復圖表 tooltip 型態判定 Bug)
+# 9. 數據分析 (🔥 防彈級：純 JSON 資料傳遞，徹底阻斷 PyArrow 當機)
 # ==========================================
 with tab_analytics:
     analysis_option = st.selectbox(
@@ -510,12 +510,11 @@ with tab_analytics:
             merged_df['weight'] = merged_df['weight'].bfill().ffill().fillna(0)
             merged_df['calories'] = merged_df['calories'].fillna(0)
             
-            # 🔥 將字典包回安全的 pd.DataFrame 讓 Altair 準確判斷資料型態
+            # 🔥 完全跳過 DataFrame，純 dict 餵給 Altair
             safe_data = merged_df.to_dict('records')
-            safe_df = pd.DataFrame(safe_data)
             
             st.markdown("#### 攝取熱量 (kcal)")
-            cal_chart = alt.Chart(safe_df).mark_bar(color='#5C9DF5').encode(
+            cal_chart = alt.Chart(alt.Data(values=safe_data)).mark_bar(color='#5C9DF5').encode(
                 x=alt.X('date_str:O', title='日期'),
                 y=alt.Y('calories:Q', title='熱量 (kcal)'),
                 tooltip=[alt.Tooltip('date_str:O', title='日期'), alt.Tooltip('calories:Q', title='熱量 (kcal)')]
@@ -523,7 +522,7 @@ with tab_analytics:
             st.altair_chart(cal_chart)
             
             st.markdown("#### 體重變化 (kg)")
-            weight_chart = alt.Chart(safe_df).mark_line(color='#FF4B4B', point=True, strokeWidth=3).encode(
+            weight_chart = alt.Chart(alt.Data(values=safe_data)).mark_line(color='#FF4B4B', point=True, strokeWidth=3).encode(
                 x=alt.X('date_str:O', title='日期'),
                 y=alt.Y('weight:Q', title='體重 (kg)', scale=alt.Scale(zero=False)),
                 tooltip=[alt.Tooltip('date_str:O', title='日期'), alt.Tooltip('weight:Q', title='體重 (kg)')]
@@ -550,10 +549,11 @@ with tab_analytics:
             
             if has_valid_data:
                 df_muscle = pd.DataFrame(list(muscle_data.items()), columns=['部位', '累積總容量 (kg)'])
-                safe_data = df_muscle.fillna(0).to_dict('records')
-                safe_df = pd.DataFrame(safe_data)
                 
-                muscle_chart = alt.Chart(safe_df).mark_bar(color='#5C9DF5').encode(
+                # 🔥 完全跳過 DataFrame，純 dict 餵給 Altair
+                safe_data = df_muscle.fillna(0).to_dict('records')
+                
+                muscle_chart = alt.Chart(alt.Data(values=safe_data)).mark_bar(color='#5C9DF5').encode(
                     x=alt.X('部位:O', title='肌肉部位', sort='-y'),
                     y=alt.Y('累積總容量 (kg):Q', title='累積總容量 (kg)'),
                     tooltip=[alt.Tooltip('部位:O', title='部位'), alt.Tooltip('累積總容量 (kg):Q', title='總容量 (kg)', format='.1f')]
@@ -601,10 +601,10 @@ with tab_analytics:
                     df_daily_1rm.rename(columns={'estimated_1rm': '當日估算 1RM'}, inplace=True)
                     df_melted = df_daily_1rm.melt(id_vars=['date_str'], value_vars=['當日估算 1RM', '3站移動平均線'], var_name='指標類型', value_name='重量 (kg)')
                     
+                    # 🔥 完全跳過 DataFrame，純 dict 餵給 Altair
                     safe_data = df_melted.fillna(0).to_dict('records')
-                    safe_df = pd.DataFrame(safe_data)
                     
-                    track_chart = alt.Chart(safe_df).mark_line(point=True, strokeWidth=3).encode(
+                    track_chart = alt.Chart(alt.Data(values=safe_data)).mark_line(point=True, strokeWidth=3).encode(
                         x=alt.X('date_str:O', title='日期'),
                         y=alt.Y('重量 (kg):Q', title='估算最大力量 (kg)', scale=alt.Scale(zero=False)),
                         color=alt.Color('指標類型:N', scale=alt.Scale(domain=['當日估算 1RM', '3站移動平均線'], range=['#5C9DF5', '#FFA500'])),
@@ -639,10 +639,11 @@ with tab_analytics:
                     x_title = "月份"
                 
                 vol_trend = df_weights.groupby('period')['volume'].sum().reset_index()
-                safe_data = vol_trend.fillna(0).to_dict('records')
-                safe_df = pd.DataFrame(safe_data)
                 
-                vol_chart = alt.Chart(safe_df).mark_bar(color='#5C9DF5').encode(
+                # 🔥 完全跳過 DataFrame，純 dict 餵給 Altair
+                safe_data = vol_trend.fillna(0).to_dict('records')
+                
+                vol_chart = alt.Chart(alt.Data(values=safe_data)).mark_bar(color='#5C9DF5').encode(
                     x=alt.X('period:O', title=x_title, sort=None),
                     y=alt.Y('volume:Q', title='總容量 (kg)'),
                     tooltip=[alt.Tooltip('period:O', title=x_title), alt.Tooltip('volume:Q', title='總容量 (kg)', format='.1f')]
