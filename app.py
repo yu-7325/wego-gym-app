@@ -4,6 +4,7 @@ import json
 import os
 from datetime import datetime
 import uuid
+import altair as alt  # 重新請回 Altair 專業繪圖引擎
 import gspread
 from google.oauth2.service_account import Credentials
 
@@ -372,7 +373,7 @@ with tab_work:
                             st.rerun()
 
 # ==========================================
-# 身體數值紀錄分頁
+# 新增：身體數值紀錄分頁
 # ==========================================
 with tab_body:
     st.header("記錄身體數據")
@@ -481,7 +482,7 @@ with tab_hist:
                                     st.rerun()
 
 # ==========================================
-# 9. 數據分析 (🔥 防彈級：全面捨棄 Altair 與 DataFrame，改用原生極簡圖表)
+# 9. 數據分析 (🔥 防彈級：重啟 Altair 繪圖並關閉強制填滿)
 # ==========================================
 with tab_analytics:
     st.header("⚖️ 體態與熱量分析")
@@ -498,17 +499,27 @@ with tab_analytics:
         
         merged_df = pd.merge(daily_cal, df_b[['date_str', 'weight']], on='date_str', how='outer')
         merged_df = merged_df.sort_values('date_str')
-        # 最安全的資料填補寫法，防禦空值
         merged_df['weight'] = merged_df['weight'].bfill().ffill()
         merged_df['calories'] = merged_df['calories'].fillna(0)
         
         st.markdown("#### 攝取熱量 (kcal)")
-        st.bar_chart(merged_df.set_index('date_str')['calories'], color="#5C9DF5")
+        # 使用 Altair 固定寬度，且「不傳入」use_container_width
+        cal_chart = alt.Chart(merged_df).mark_bar(color='#5C9DF5').encode(
+            x=alt.X('date_str:O', title='日期'),
+            y=alt.Y('calories:Q', title='熱量 (kcal)'),
+            tooltip=['date_str', 'calories']
+        ).properties(width=alt.Step(60))
+        st.altair_chart(cal_chart)
         
         st.markdown("#### 體重變化 (kg)")
-        st.line_chart(merged_df.set_index('date_str')['weight'], color="#FF4B4B")
+        weight_chart = alt.Chart(merged_df).mark_line(color='#FF4B4B', point=True, strokeWidth=3).encode(
+            x=alt.X('date_str:O', title='日期'),
+            y=alt.Y('weight:Q', title='體重 (kg)', scale=alt.Scale(zero=False)),
+            tooltip=['date_str', 'weight']
+        ).properties(width=alt.Step(60))
+        st.altair_chart(weight_chart)
         
-        st.caption("觀察重點：可評估目前的熱量盈餘/缺口是否達到預期的體態成長目標。")
+        st.caption("觀察重點：可評估目前的熱量盈餘/缺口是否達到預期的體態成長目標。超出的圖表會自動產生左右滑動條！")
     else:
         st.info("💡 需要同時擁有「飲食紀錄」與「體重紀錄」才能解鎖分析圖表！")
 
@@ -549,12 +560,24 @@ with tab_analytics:
             
             if time_interval == "日 (Daily)":
                 df_weights['period'] = df_weights['date_obj'].dt.strftime('%Y-%m-%d')
+                x_title = "日期"
             elif time_interval == "週 (Weekly)":
                 df_weights['period'] = (df_weights['date_obj'] - pd.to_timedelta(df_weights['date_obj'].dt.dayofweek, unit='d')).dt.strftime('%Y-%m-%d (週一)')
+                x_title = "週度"
             else:
                 df_weights['period'] = df_weights['date_obj'].dt.strftime('%Y-%m')
+                x_title = "月份"
             
             vol_trend = df_weights.groupby('period')['volume'].sum().reset_index()
             
-            st.bar_chart(vol_trend.set_index('period')['volume'], color="#5C9DF5")
-            st.caption("觀察重點：確保柱狀圖呈現『漸進性超負荷』的緩步上升趨勢。")
+            # 使用 Altair 固定寬度，且「不傳入」use_container_width
+            vol_chart = alt.Chart(vol_trend).mark_bar(color='#5C9DF5').encode(
+                x=alt.X('period:O', title=x_title, sort=None),
+                y=alt.Y('volume:Q', title='總容量 (kg)'),
+                tooltip=[alt.Tooltip('period', title=x_title), alt.Tooltip('volume', title='總容量')]
+            ).properties(width=alt.Step(60))
+            
+            st.altair_chart(vol_chart)
+            st.caption("觀察重點：確保圖表呈現『漸進性超負荷』的緩步上升趨勢。超出的圖表會自動產生左右滑動條！")
+        else:
+            st.write("目前尚無重量訓練數據可供分析。")
