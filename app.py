@@ -60,7 +60,7 @@ ROUTINE_PLANS = {
 }
 
 # ==========================================
-# 2. 雲端資料庫串接
+# 2. 雲端資料庫串接與狀態初始化 (🔥 修復 KeyError)
 # ==========================================
 @st.cache_resource
 def get_gsheet_client():
@@ -126,13 +126,18 @@ def save_data():
     custom_list = [{"plan_day": pd, "exercise_name": ex} for pd, ex_list in st.session_state.custom_exercises.items() for ex in ex_list]
     update_worksheet(sh.worksheet("CustomExercises"), custom_list, ["plan_day", "exercise_name"])
 
+# 確保所有狀態都有初始值，防止 KeyError
+if "nutrition_entries" not in st.session_state: st.session_state.nutrition_entries = []
+if "workout_entries" not in st.session_state: st.session_state.workout_entries = []
+if "custom_exercises" not in st.session_state: st.session_state.custom_exercises = {}
+if "active_routine" not in st.session_state: st.session_state.active_routine = "4日力量與有氧 (目前)"
+
 if "data_loaded" not in st.session_state:
     with st.spinner("🔄 正在與 Google 雲端資料庫同步中..."):
         data = load_data()
         st.session_state.nutrition_entries = data.get("nutrition", [])
         st.session_state.workout_entries = data.get("workout", [])
         st.session_state.custom_exercises = data.get("custom_exercises", {})
-        st.session_state.active_routine = "4日力量與有氧 (目前)"
         st.session_state.data_loaded = True
 
 def get_today_str(): return datetime.now().strftime("%Y-%m-%d")
@@ -196,7 +201,7 @@ tab_nutri, tab_work, tab_recover, tab_hist_nutri, tab_hist_work, tab_analytics =
 ])
 
 # ==========================================
-# 4. 今日飲食 
+# 4. 今日飲食 (🔥 修復 St.spinner)
 # ==========================================
 with tab_nutri:
     st.header("新增攝取")
@@ -263,7 +268,7 @@ with tab_nutri:
                     st.rerun()
 
 # ==========================================
-# 5. 今日課表 
+# 5. 今日課表 (🔥 修復 St.spinner)
 # ==========================================
 with tab_work:
     st.header("新增訓練動作")
@@ -385,7 +390,7 @@ with tab_recover:
         st.write("---")
 
 # ==========================================
-# 7. 飲食記錄 & 8. 重訓記錄
+# 7. 飲食記錄 & 8. 重訓記錄 (🔥 修復 St.spinner)
 # ==========================================
 with tab_hist_nutri:
     st.header("歷史飲食記錄")
@@ -430,7 +435,7 @@ with tab_hist_work:
                                 st.rerun()
 
 # ==========================================
-# 9. 數據分析 
+# 9. 數據分析 (🔥 修復 width="stretch" 警告)
 # ==========================================
 with tab_analytics:
     st.header("🏆 個人最高紀錄 (1RM PR 榮譽榜)")
@@ -445,7 +450,7 @@ with tab_analytics:
                 估算最大肌力_1RM=('estimated_1rm', 'max')
             ).reset_index()
             
-            st.dataframe(pr_summary.style.format({"最高極限重量": "{:.1f} kg", "估算最大肌力_1RM": "{:.1f} kg"}), use_container_width=True)
+            st.dataframe(pr_summary.style.format({"最高極限重量": "{:.1f} kg", "估算最大肌力_1RM": "{:.1f} kg"}), width="stretch")
         else:
             st.write("目前尚無重量訓練數據，快去建立第一筆 PR 吧！")
     else:
@@ -476,4 +481,5 @@ with tab_analytics:
                 x=alt.X('period:O', title=x_title, sort=None), y=alt.Y('volume:Q', title='總容量 (kg)'),
                 tooltip=[alt.Tooltip('period', title=x_title), alt.Tooltip('volume', title='總容量')]
             ).properties(width=alt.Step(60))
-            st.altair_chart(chart, use_container_width=True)
+            
+            st.altair_chart(chart, width="stretch")
