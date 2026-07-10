@@ -4,7 +4,6 @@ import json
 import os
 from datetime import datetime
 import uuid
-import altair as alt
 import gspread
 from google.oauth2.service_account import Credentials
 
@@ -482,18 +481,17 @@ with tab_hist:
                                     st.rerun()
 
 # ==========================================
-# 9. 數據分析 (🔥 優化：下拉選單集中分類管理)
+# 9. 數據分析 (🔥 升級方案二：加入肌肉部位容量佔比)
 # ==========================================
 with tab_analytics:
-    # 建立統一下拉式選單
     analysis_option = st.selectbox(
         "📊 請選擇分析圖表", 
-        ["⚖️ 體態與熱量分析", "🏆 1RM PR 榮譽榜", "🏋️ 訓練總容量趨勢"]
+        ["⚖️ 體態與熱量分析", "📊 肌肉部位容量佔比", "🏆 1RM PR 榮譽榜", "🏋️ 訓練總容量趨勢"]
     )
     
     st.divider()
 
-    # 模組 1: 體態與熱量分析 (合併顯示)
+    # 模組 1: 體態與熱量分析
     if analysis_option == "⚖️ 體態與熱量分析":
         st.header("⚖️ 體態與熱量分析")
         has_nutri = bool(st.session_state.nutrition_entries)
@@ -527,12 +525,46 @@ with tab_analytics:
                 tooltip=['date_str', 'weight']
             ).properties(width=alt.Step(60))
             st.altair_chart(weight_chart)
-            
-            st.caption("觀察重點：可評估目前的熱量盈餘/缺口是否達到預期的體態成長目標。")
         else:
             st.info("💡 需要同時擁有「飲食紀錄」與「體重紀錄」才能解鎖分析圖表！")
 
-    # 模組 2: 1RM PR 榮譽榜
+    # 🔥 新增模組 2: 肌肉部位容量佔比
+    elif analysis_option == "📊 肌肉部位容量佔比":
+        st.header("📊 肌肉部位容量佔比")
+        if st.session_state.workout_entries:
+            # 初始化所有肌肉部位容量為 0
+            muscle_data = {m: 0.0 for m in MUSCLE_GROUPS.keys()}
+            has_valid_data = False
+            
+            # 計算每筆紀錄的容量並歸類至對應肌肉群
+            for w in st.session_state.workout_entries:
+                if w.get("weight", 0) > 0 and w.get("sets", 0) > 0 and w.get("reps", 0) > 0:
+                    vol = w["weight"] * w["sets"] * w["reps"]
+                    day_type = w["dayType"]
+                    # 依據訓練日對應肌肉
+                    for muscle in WORKOUT_MUSCLE_MAPPING.get(day_type, []):
+                        if muscle in muscle_data:
+                            muscle_data[muscle] += vol
+                            has_valid_data = True
+            
+            if has_valid_data:
+                df_muscle = pd.DataFrame(list(muscle_data.items()), columns=['部位', '累積總容量 (kg)'])
+                
+                # 建立高穩定性的 Altair 長條圖（固定寬度防止擠壓）
+                muscle_chart = alt.Chart(df_muscle).mark_bar(color='#5C9DF5').encode(
+                    x=alt.X('部位:O', title='肌肉部位', sort='-y'), # 依容量由大到小排序
+                    y=alt.Y('累積總容量 (kg):Q', title='累積總容量 (kg)'),
+                    tooltip=[alt.Tooltip('部位', title='部位'), alt.Tooltip('累積總容量 (kg)', title='總容量', format='.1f')]
+                ).properties(width=alt.Step(60))
+                
+                st.altair_chart(muscle_chart)
+                st.caption("觀察重點：檢視各部位的受刺激總量。若推、拉、腿比例嚴重失衡（例如胸部容量遠超背部或腿部），建議微調課表的頻率或組數配置，以確保體態發展對稱與力量平衡。")
+            else:
+                st.write("目前尚無重量訓練數據可供分析。")
+        else:
+            st.write("目前尚無任何訓練數據。")
+
+    # 模組 3: 1RM PR 榮譽榜
     elif analysis_option == "🏆 1RM PR 榮譽榜":
         st.header("🏆 個人最高紀錄 (1RM PR 榮譽榜)")
         if st.session_state.workout_entries:
@@ -557,7 +589,7 @@ with tab_analytics:
         else:
             st.write("目前尚無任何訓練數據。")
 
-    # 模組 3: 訓練總容量趨勢
+    # 模組 4: 訓練總容量趨勢
     elif analysis_option == "🏋️ 訓練總容量趨勢":
         st.header("🏋️ 訓練總容量趨勢 (Total Volume)")
         if st.session_state.workout_entries:
@@ -587,6 +619,5 @@ with tab_analytics:
                 ).properties(width=alt.Step(60))
                 
                 st.altair_chart(vol_chart)
-                st.caption("觀察重點：確保圖表呈現『漸進性超負荷』的緩步上升趨勢。超出的圖表會自動產生左右滑動條！")
             else:
                 st.write("目前尚無重量訓練數據可供分析。")
