@@ -4,7 +4,7 @@ import json
 import os
 from datetime import datetime
 import uuid
-import altair as alt  # 確保專業繪圖引擎完整導入
+import altair as alt
 import gspread
 from google.oauth2.service_account import Credentials
 
@@ -215,7 +215,7 @@ with tab_nutri:
     with col_q1:
         quick_meal = st.selectbox("快速加入時段", MEAL_TYPES, index=3, label_visibility="collapsed")
     with col_q2:
-        if st.button("➕ 加入乳清蛋白一匙 (120 kcal)"):
+        if st.button("➕ 加入乳清蛋白 (120 kcal)"):
             entry_date = datetime.combine(selected_date_n, datetime.now().time()).isoformat()
             st.session_state.nutrition_entries.append({
                 "id": str(uuid.uuid4()), "date": entry_date, "type": quick_meal, "foodName": "乳清蛋白", "protein": 25.0, "carbs": 2.0, "fat": 1.5, "calories": 120.0
@@ -482,14 +482,13 @@ with tab_hist:
                                     st.rerun()
 
 # ==========================================
-# 9. 數據分析 (🔥 升級方案三：加入 1RM 長期力量均線走勢圖)
+# 9. 數據分析 (🔥 終極防彈版：純 JSON 繞道技術)
 # ==========================================
 with tab_analytics:
     analysis_option = st.selectbox(
-        "📊 請選擇 analysis 圖表", 
+        "📊 請選擇分析圖表", 
         ["⚖️ 體態與熱量分析", "📊 肌肉部位容量佔比", "🏆 1RM PR 榮譽榜與力量趨勢", "🏋️ 訓練總容量趨勢"]
     )
-    
     st.divider()
 
     # 模組 1: 體態與熱量分析
@@ -508,11 +507,14 @@ with tab_analytics:
             
             merged_df = pd.merge(daily_cal, df_b[['date_str', 'weight']], on='date_str', how='outer')
             merged_df = merged_df.sort_values('date_str')
-            merged_df['weight'] = merged_df['weight'].bfill().ffill()
+            merged_df['weight'] = merged_df['weight'].bfill().ffill().fillna(0)
             merged_df['calories'] = merged_df['calories'].fillna(0)
             
+            # 🔥 將 Pandas 轉為純 dict，強制閃避 PyArrow 當機地雷
+            safe_data = merged_df.to_dict('records')
+            
             st.markdown("#### 攝取熱量 (kcal)")
-            cal_chart = alt.Chart(merged_df).mark_bar(color='#5C9DF5').encode(
+            cal_chart = alt.Chart(alt.Data(values=safe_data)).mark_bar(color='#5C9DF5').encode(
                 x=alt.X('date_str:O', title='日期'),
                 y=alt.Y('calories:Q', title='熱量 (kcal)'),
                 tooltip=['date_str', 'calories']
@@ -520,7 +522,7 @@ with tab_analytics:
             st.altair_chart(cal_chart)
             
             st.markdown("#### 體重變化 (kg)")
-            weight_chart = alt.Chart(merged_df).mark_line(color='#FF4B4B', point=True, strokeWidth=3).encode(
+            weight_chart = alt.Chart(alt.Data(values=safe_data)).mark_line(color='#FF4B4B', point=True, strokeWidth=3).encode(
                 x=alt.X('date_str:O', title='日期'),
                 y=alt.Y('weight:Q', title='體重 (kg)', scale=alt.Scale(zero=False)),
                 tooltip=['date_str', 'weight']
@@ -547,25 +549,25 @@ with tab_analytics:
             
             if has_valid_data:
                 df_muscle = pd.DataFrame(list(muscle_data.items()), columns=['部位', '累積總容量 (kg)'])
+                safe_data = df_muscle.fillna(0).to_dict('records') # 🔥 純 JSON 繞道
                 
-                muscle_chart = alt.Chart(df_muscle).mark_bar(color='#5C9DF5').encode(
+                muscle_chart = alt.Chart(alt.Data(values=safe_data)).mark_bar(color='#5C9DF5').encode(
                     x=alt.X('部位:O', title='肌肉部位', sort='-y'),
                     y=alt.Y('累積總容量 (kg):Q', title='累積總容量 (kg)'),
                     tooltip=[alt.Tooltip('部位', title='部位'), alt.Tooltip('累積總容量 (kg)', title='總容量', format='.1f')]
                 ).properties(width=alt.Step(60))
                 st.altair_chart(muscle_chart)
-                st.caption("觀察重點：檢視各部位的受刺激總量。若推、拉、腿比例嚴重失衡，建議微調課表。")
             else:
                 st.write("目前尚無重量訓練數據可供分析。")
         else:
             st.write("目前尚無任何訓練數據。")
 
-    # 🔥 升級模組 3: 1RM PR 榮譽榜與力量趨勢 (新增特定動作均線折線圖)
+    # 模組 3: 1RM PR 榮譽榜與力量趨勢
     elif analysis_option == "🏆 1RM PR 榮譽榜與力量趨勢":
         st.header("🏆 個人最高紀錄 (1RM PR 榮譽榜)")
         if st.session_state.workout_entries:
             df_all = pd.DataFrame(st.session_state.workout_entries)
-            df_weight_only = df_all[df_all['weight'] > 0].copy()
+            df_weight_only = df_all[df_all.get('weight', 0) > 0].copy()
             
             if not df_weight_only.empty:
                 df_weight_only['estimated_1rm'] = df_weight_only.apply(lambda row: estimate_1rm(row['weight'], row['reps']), axis=1)
@@ -582,7 +584,6 @@ with tab_analytics:
                 
                 st.table(pr_display.set_index('訓練動作'))
                 
-                # 🔥 新增功能：單一核心動作 1RM 長期趨勢 + 移動平均線
                 st.write("---")
                 st.subheader("📈 單一動作力量走勢與均線追蹤")
                 
@@ -591,27 +592,23 @@ with tab_analytics:
                 
                 df_track = df_weight_only[df_weight_only['exercise'] == selected_track_ex].copy()
                 df_track['date_str'] = df_track['date'].str[:10]
-                
-                # 同一天可能有好幾組，每日取最強的 1RM 作為當天代表
                 df_daily_1rm = df_track.groupby('date_str')['estimated_1rm'].max().reset_index().sort_values('date_str')
                 
                 if not df_daily_1rm.empty:
-                    # 計算 3 次訓練移動平均線
                     df_daily_1rm['3站移動平均線'] = df_daily_1rm['estimated_1rm'].rolling(window=3, min_periods=1).mean()
                     df_daily_1rm.rename(columns={'estimated_1rm': '當日估算 1RM'}, inplace=True)
-                    
-                    # 將寬表格 Melt 成群組長表格，這樣用 Altair 畫雙線圖非常安全，絕不當機
                     df_melted = df_daily_1rm.melt(id_vars=['date_str'], value_vars=['當日估算 1RM', '3站移動平均線'], var_name='指標類型', value_name='重量 (kg)')
                     
-                    track_chart = alt.Chart(df_melted).mark_line(point=True, strokeWidth=3).encode(
+                    safe_data = df_melted.fillna(0).to_dict('records') # 🔥 純 JSON 繞道
+                    
+                    track_chart = alt.Chart(alt.Data(values=safe_data)).mark_line(point=True, strokeWidth=3).encode(
                         x=alt.X('date_str:O', title='日期'),
                         y=alt.Y('重量 (kg):Q', title='估算最大力量 (kg)', scale=alt.Scale(zero=False)),
                         color=alt.Color('指標類型:N', scale=alt.Scale(domain=['當日估算 1RM', '3站移動平均線'], range=['#5C9DF5', '#FFA500'])),
                         tooltip=['date_str', '指標類型', alt.Tooltip('重量 (kg)', format='.1f')]
                     ).properties(width=alt.Step(60))
-                    
                     st.altair_chart(track_chart)
-                    st.caption("💡 藍色線為【當日實際估算 1RM】，橘色線為【3站力量移動平均線】。當橘色均線持續上揚，代表你的絕對力量水平正處於穩健成長期！")
+                    st.caption("💡 藍色線為當日 1RM，橘色線為 3 站力量均線。若均線上揚代表力量穩健成長中！")
             else:
                 st.write("目前尚無重量訓練數據，快去建立第一筆 PR 吧！")
         else:
@@ -639,13 +636,14 @@ with tab_analytics:
                     x_title = "月份"
                 
                 vol_trend = df_weights.groupby('period')['volume'].sum().reset_index()
+                safe_data = vol_trend.fillna(0).to_dict('records') # 🔥 純 JSON 繞道
                 
-                vol_chart = alt.Chart(vol_trend).mark_bar(color='#5C9DF5').encode(
+                vol_chart = alt.Chart(alt.Data(values=safe_data)).mark_bar(color='#5C9DF5').encode(
                     x=alt.X('period:O', title=x_title, sort=None),
                     y=alt.Y('volume:Q', title='總容量 (kg)'),
                     tooltip=[alt.Tooltip('period', title=x_title), alt.Tooltip('volume', title='總容量')]
                 ).properties(width=alt.Step(60))
+                
                 st.altair_chart(vol_chart)
-                st.caption("觀察重點：確保圖表呈現『漸進性超負荷』的緩步上升趨勢。超出的圖表會自動產生左右滑動條！")
             else:
                 st.write("目前尚無重量訓練數據可供分析。")
