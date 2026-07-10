@@ -4,6 +4,7 @@ import json
 import os
 from datetime import datetime
 import uuid
+import altair as alt  # 🔥 補上這行最關鍵的繪圖引擎匯入！
 import gspread
 from google.oauth2.service_account import Credentials
 
@@ -481,7 +482,7 @@ with tab_hist:
                                     st.rerun()
 
 # ==========================================
-# 9. 數據分析 (🔥 升級方案二：加入肌肉部位容量佔比)
+# 9. 數據分析 (🔥 防彈級：固定圖表寬度並移除拉伸設定)
 # ==========================================
 with tab_analytics:
     analysis_option = st.selectbox(
@@ -528,20 +529,17 @@ with tab_analytics:
         else:
             st.info("💡 需要同時擁有「飲食紀錄」與「體重紀錄」才能解鎖分析圖表！")
 
-    # 🔥 新增模組 2: 肌肉部位容量佔比
+    # 模組 2: 肌肉部位容量佔比
     elif analysis_option == "📊 肌肉部位容量佔比":
         st.header("📊 肌肉部位容量佔比")
         if st.session_state.workout_entries:
-            # 初始化所有肌肉部位容量為 0
             muscle_data = {m: 0.0 for m in MUSCLE_GROUPS.keys()}
             has_valid_data = False
             
-            # 計算每筆紀錄的容量並歸類至對應肌肉群
             for w in st.session_state.workout_entries:
                 if w.get("weight", 0) > 0 and w.get("sets", 0) > 0 and w.get("reps", 0) > 0:
                     vol = w["weight"] * w["sets"] * w["reps"]
                     day_type = w["dayType"]
-                    # 依據訓練日對應肌肉
                     for muscle in WORKOUT_MUSCLE_MAPPING.get(day_type, []):
                         if muscle in muscle_data:
                             muscle_data[muscle] += vol
@@ -550,15 +548,14 @@ with tab_analytics:
             if has_valid_data:
                 df_muscle = pd.DataFrame(list(muscle_data.items()), columns=['部位', '累積總容量 (kg)'])
                 
-                # 建立高穩定性的 Altair 長條圖（固定寬度防止擠壓）
                 muscle_chart = alt.Chart(df_muscle).mark_bar(color='#5C9DF5').encode(
-                    x=alt.X('部位:O', title='肌肉部位', sort='-y'), # 依容量由大到小排序
+                    x=alt.X('部位:O', title='肌肉部位', sort='-y'),
                     y=alt.Y('累積總容量 (kg):Q', title='累積總容量 (kg)'),
                     tooltip=[alt.Tooltip('部位', title='部位'), alt.Tooltip('累積總容量 (kg)', title='總容量', format='.1f')]
                 ).properties(width=alt.Step(60))
-                
                 st.altair_chart(muscle_chart)
-                st.caption("觀察重點：檢視各部位的受刺激總量。若推、拉、腿比例嚴重失衡（例如胸部容量遠超背部或腿部），建議微調課表的頻率或組數配置，以確保體態發展對稱與力量平衡。")
+                
+                st.caption("觀察重點：檢視各部位的受刺激總量。若推、拉、腿比例嚴重失衡，建議微調課表。")
             else:
                 st.write("目前尚無重量訓練數據可供分析。")
         else:
@@ -617,7 +614,8 @@ with tab_analytics:
                     y=alt.Y('volume:Q', title='總容量 (kg)'),
                     tooltip=[alt.Tooltip('period', title=x_title), alt.Tooltip('volume', title='總容量')]
                 ).properties(width=alt.Step(60))
-                
                 st.altair_chart(vol_chart)
+                
+                st.caption("觀察重點：確保圖表呈現『漸進性超負荷』的緩步上升趨勢。超出的圖表會自動產生左右滑動條！")
             else:
                 st.write("目前尚無重量訓練數據可供分析。")
