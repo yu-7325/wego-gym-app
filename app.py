@@ -4,7 +4,6 @@ import json
 import os
 from datetime import datetime
 import uuid
-import altair as alt
 import gspread
 from google.oauth2.service_account import Credentials
 
@@ -373,7 +372,7 @@ with tab_work:
                             st.rerun()
 
 # ==========================================
-# 新增：身體數值紀錄分頁 (🔥 捨棄高風險 Styler，改用安全字串格式化)
+# 身體數值紀錄分頁
 # ==========================================
 with tab_body:
     st.header("記錄身體數據")
@@ -408,13 +407,12 @@ with tab_body:
         df_body['date_str'] = df_body['date'].str[:10]
         df_body = df_body.sort_values(by='date_str', ascending=False).head(5)
         
-        # 使用安全的字串格式化，避免 PyArrow 記憶體崩潰
         df_body_display = df_body[['date_str', 'weight', 'body_fat']].copy()
         df_body_display.rename(columns={'date_str': '日期', 'weight': '體重', 'body_fat': '體脂率'}, inplace=True)
         df_body_display['體重'] = df_body_display['體重'].apply(lambda x: f"{x:.1f} kg")
         df_body_display['體脂率'] = df_body_display['體脂率'].apply(lambda x: f"{x:.1f} %" if pd.notnull(x) else "")
         
-        st.dataframe(df_body_display, hide_index=True, width="stretch")
+        st.table(df_body_display.set_index('日期'))
     else:
         st.write("尚未有身體紀錄。")
 
@@ -438,7 +436,7 @@ with tab_recover:
         st.write("---")
 
 # ==========================================
-# 7. 歷史記錄 
+# 7. 歷史記錄
 # ==========================================
 with tab_hist:
     hist_type = st.radio("選擇檢視歷史：", ["飲食紀錄", "重訓紀錄"], horizontal=True)
@@ -483,11 +481,10 @@ with tab_hist:
                                     st.rerun()
 
 # ==========================================
-# 9. 數據分析 (🔥 修復 width="stretch" 警告與 ffill 語法)
+# 9. 數據分析 (🔥 防彈級：全面捨棄 Altair 與 DataFrame，改用原生極簡圖表)
 # ==========================================
 with tab_analytics:
-    st.header("⚖️ 體態與熱量交叉分析")
-    
+    st.header("⚖️ 體態與熱量分析")
     has_nutri = bool(st.session_state.nutrition_entries)
     has_body = bool(st.session_state.body_entries)
     
@@ -499,28 +496,25 @@ with tab_analytics:
         df_b = pd.DataFrame(st.session_state.body_entries)
         df_b['date_str'] = df_b['date'].str[:10]
         
-        # 修復舊版 ffill 語法
-        merged_df = pd.merge(daily_cal, df_b[['date_str', 'weight']], on='date_str', how='outer').ffill().fillna(0)
+        merged_df = pd.merge(daily_cal, df_b[['date_str', 'weight']], on='date_str', how='outer')
+        merged_df = merged_df.sort_values('date_str')
+        # 最安全的資料填補寫法，防禦空值
+        merged_df['weight'] = merged_df['weight'].bfill().ffill()
+        merged_df['calories'] = merged_df['calories'].fillna(0)
         
-        base = alt.Chart(merged_df).encode(x=alt.X('date_str:O', title='日期'))
-        bar = base.mark_bar(opacity=0.6, color='#5C9DF5').encode(
-            y=alt.Y('calories:Q', title='攝取熱量 (kcal)'),
-            tooltip=['date_str', 'calories']
-        )
-        line = base.mark_line(color='#FF4B4B', point=True, strokeWidth=3).encode(
-            y=alt.Y('weight:Q', title='體重 (kg)', scale=alt.Scale(zero=False)),
-            tooltip=['date_str', 'weight']
-        )
+        st.markdown("#### 攝取熱量 (kcal)")
+        st.bar_chart(merged_df.set_index('date_str')['calories'], color="#5C9DF5")
         
-        chart_dual = alt.layer(bar, line).resolve_scale(y='independent').properties(width=alt.Step(60))
-        st.altair_chart(chart_dual, width="stretch")
-        st.caption("觀察重點：紅線為體重趨勢，藍柱為熱量。可評估目前的熱量盈餘/缺口是否達到預期目標。")
+        st.markdown("#### 體重變化 (kg)")
+        st.line_chart(merged_df.set_index('date_str')['weight'], color="#FF4B4B")
+        
+        st.caption("觀察重點：可評估目前的熱量盈餘/缺口是否達到預期的體態成長目標。")
     else:
-        st.info("💡 需要同時擁有「飲食紀錄」與「體重紀錄」才能解鎖交叉分析圖表！")
+        st.info("💡 需要同時擁有「飲食紀錄」與「體重紀錄」才能解鎖分析圖表！")
 
     st.divider()
-
     st.header("🏆 個人最高紀錄 (1RM PR 榮譽榜)")
+    
     if st.session_state.workout_entries:
         df_all = pd.DataFrame(st.session_state.workout_entries)
         if 'weight' in df_all.columns and not df_all[df_all['weight'] > 0].empty:
@@ -532,12 +526,12 @@ with tab_analytics:
                 估算最大肌力_1RM=('estimated_1rm', 'max')
             ).reset_index()
             
-            # 捨棄高風險 Styler，改用安全字串格式化
             pr_display = pr_summary.copy()
+            pr_display.rename(columns={'exercise': '訓練動作'}, inplace=True)
             pr_display['最高極限重量'] = pr_display['最高極限重量'].apply(lambda x: f"{x:.1f} kg")
             pr_display['估算最大肌力_1RM'] = pr_display['估算最大肌力_1RM'].apply(lambda x: f"{x:.1f} kg")
             
-            st.dataframe(pr_display, hide_index=True, width="stretch")
+            st.table(pr_display.set_index('訓練動作'))
         else:
             st.write("目前尚無重量訓練數據，快去建立第一筆 PR 吧！")
     else:
@@ -555,17 +549,12 @@ with tab_analytics:
             
             if time_interval == "日 (Daily)":
                 df_weights['period'] = df_weights['date_obj'].dt.strftime('%Y-%m-%d')
-                x_title = "日期"
             elif time_interval == "週 (Weekly)":
                 df_weights['period'] = (df_weights['date_obj'] - pd.to_timedelta(df_weights['date_obj'].dt.dayofweek, unit='d')).dt.strftime('%Y-%m-%d (週一)')
-                x_title = "週度"
             else:
                 df_weights['period'] = df_weights['date_obj'].dt.strftime('%Y-%m')
-                x_title = "月份"
             
             vol_trend = df_weights.groupby('period')['volume'].sum().reset_index()
-            chart = alt.Chart(vol_trend).mark_bar(color='#5C9DF5').encode(
-                x=alt.X('period:O', title=x_title, sort=None), y=alt.Y('volume:Q', title='總容量 (kg)'),
-                tooltip=[alt.Tooltip('period', title=x_title), alt.Tooltip('volume', title='總容量')]
-            ).properties(width=alt.Step(60))
-            st.altair_chart(chart, width="stretch")
+            
+            st.bar_chart(vol_trend.set_index('period')['volume'], color="#5C9DF5")
+            st.caption("觀察重點：確保柱狀圖呈現『漸進性超負荷』的緩步上升趨勢。")
