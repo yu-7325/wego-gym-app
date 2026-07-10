@@ -1,53 +1,200 @@
-# app.py
-
 import streamlit as st
 import pandas as pd
+import json
+import os
 from datetime import datetime
 import uuid
 import altair as alt
+import gspread
+from google.oauth2.service_account import Credentials
+from collections import defaultdict  # 🔥 新增：用來取代 Pandas 分組的原生套件
 
-# 匯入我們的自訂模組
-from config import MEAL_TYPES, WORKOUT_MUSCLE_MAPPING, MUSCLE_GROUPS, ROUTINE_PLANS
-import services
+# ==========================================
+# 1. 常數與多維度課表設定
+# ==========================================
+MEAL_TYPES = ["早餐", "午餐", "練前餐", "練後餐", "晚餐", "宵夜"]
+SHEET_NAME = "WeGoGYM_Database"
 
-# 確保 Session State 初始狀態安全
+WORKOUT_MUSCLE_MAPPING = {
+    "Chest Day": ["Chest", "Triceps", "Shoulders"],
+    "Back Day": ["Back", "Biceps", "Forearms"],
+    "Leg Day": ["Legs", "Abs"],
+    "Power Day": ["Abs", "Back", "Legs"],
+    "Chest+Tricep": ["Chest", "Triceps"],
+    "Back+Biceps": ["Back", "Biceps"],
+    "Shoulder+Chest": ["Shoulders", "Chest"],
+    "Hamstring+Back": ["Legs", "Back"],
+    "Arm Day": ["Biceps", "Triceps", "Forearms"],
+    "Cardio": []
+}
+
+MUSCLE_GROUPS = {
+    "Chest": {"recovery_hours": 48}, "Back": {"recovery_hours": 72},
+    "Legs": {"recovery_hours": 72}, "Abs": {"recovery_hours": 24},
+    "Biceps": {"recovery_hours": 24}, "Shoulders": {"recovery_hours": 48},
+    "Triceps": {"recovery_hours": 48}, "Forearms": {"recovery_hours": 24}
+}
+
+ROUTINE_PLANS = {
+    "4日力量與有氧 (目前)": {
+        "days": ["Chest Day", "Back Day", "Leg Day", "Power Day", "Cardio"],
+        "exercises": {
+            "Chest Day": ["槓鈴臥推", "機械胸推", "上斜臥推", "肩推", "側平舉&飛鳥", "機械夾胸", "繩索下拉", "壺鈴三頭", "機械卷腹"],
+            "Back Day": ["引體向上", "機械上背", "機械下背", "機械下拉", "直臂下拉", "繩索面拉", "反式飛鳥", "二頭彎舉", "機械卷腹"],
+            "Leg Day": ["深蹲", "腿推機", "保加利亞", "RDL", "北歐彎舉", "負重提踵", "機械卷腹"],
+            "Power Day": ["Clean", "Snatch", "六角槓硬舉", "壺鈴swing", "藥球下砸", "機械卷腹"],
+            "Cardio": ["跑步機", "飛輪", "滑步機", "登階機", "跳繩", "戶外跑"]
+        }
+    },
+    "6日健美分化 (新計畫)": {
+        "days": ["Leg Day", "Chest+Tricep", "Back+Biceps", "Shoulder+Chest", "Hamstring+Back", "Arm Day", "Cardio"],
+        "exercises": {
+            "Leg Day": ["深蹲", "腿推機", "保加利亞", "坐姿腿伸展", "負重提踵", "機械卷腹"],
+            "Chest+Tricep": ["槓鈴臥推", "上斜臥推", "機械胸推", "雙槓撐體", "繩索下拉", "機械卷腹"],
+            "Back+Biceps": ["引體向上", "機械下拉", "機械上背", "機械下背", "單臂亞鈴划船", "二頭彎舉", "機械卷腹"],
+            "Shoulder+Chest": ["肩推", "側平舉&飛鳥", "反式飛鳥", "啞鈴前平舉", "機械夾胸", "機械卷腹"],
+            "Hamstring+Back": ["RDL", "北歐彎舉", "六角槓硬舉", "俯臥腿彎舉", "直臂下拉", "機械卷腹"],
+            "Arm Day": ["壺鈴三頭", "二頭彎舉", "繩索面拉", "牧師凳彎舉", "碎顱式", "機械卷腹"],
+            "Cardio": ["跑步機", "飛輪", "滑步機", "登階機", "跳繩", "戶外跑"]
+        }
+    }
+}
+
+# ==========================================
+# 2. 雲端資料庫串接與狀態初始化
+# ==========================================
+@st.cache_resource
+def get_gsheet_client():
+    creds = Credentials.from_service_account_info(
+        st.secrets["gcp_service_account"],
+        scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+    )
+    return gspread.authorize(creds)
+
+def ensure_worksheets(sh):
+    expected_sheets = ["Nutrition", "Workout", "CustomExercises", "BodyMetrics"]
+    existing_sheets = [ws.title for ws in sh.worksheets()]
+    for ws_name in expected_sheets:
+        if ws_name not in existing_sheets:
+            sh.add_worksheet(title=ws_name, rows="1000", cols="20")
+
+def load_data():
+    gc = get_gsheet_client()
+    try:
+        sh = gc.open(SHEET_NAME)
+    except gspread.exceptions.SpreadsheetNotFound:
+        st.error(f"找不到名為 '{SHEET_NAME}' 的試算表。請確認金鑰權限設定正確！")
+        st.stop()
+        
+    ensure_worksheets(sh)
+    
+    nutri_records = sh.worksheet("Nutrition").get_all_records()
+    for r in nutri_records: r["foodName"] = r["foodName"] if r["foodName"] != "" else None
+        
+    work_records = sh.worksheet("Workout").get_all_records()
+    for r in work_records:
+        r["duration"] = float(r["duration"]) if r["duration"] != "" else None
+        r["distance"] = float(r["distance"]) if r["distance"] != "" else None
+        r["notes"] = str(r["notes"]) if r["notes"] != "" else None
+
+    body_records = sh.worksheet("BodyMetrics").get_all_records()
+    for r in body_records:
+         r["weight"] = float(r["weight"]) if r["weight"] != "" else None
+         r["body_fat"] = float(r["body_fat"]) if r["body_fat"] != "" else None
+        
+    custom_records = sh.worksheet("CustomExercises").get_all_records()
+    custom_dict = {}
+    for r in custom_records:
+        plan_day = r.get("plan_day")
+        ex = r.get("exercise_name")
+        if plan_day not in custom_dict: custom_dict[plan_day] = []
+        custom_dict[plan_day].append(ex)
+
+    return {"nutrition": nutri_records, "workout": work_records, "body_metrics": body_records, "custom_exercises": custom_dict}
+
+def update_worksheet(ws, data_list, default_headers):
+    ws.clear()
+    if not data_list:
+        ws.update([default_headers])
+        return
+    headers = list(data_list[0].keys())
+    rows = []
+    for row_dict in data_list:
+        row = [row_dict.get(h) if row_dict.get(h) is not None else "" for h in headers]
+        rows.append(row)
+    ws.update([headers] + rows)
+
+def save_data():
+    gc = get_gsheet_client()
+    sh = gc.open(SHEET_NAME)
+    update_worksheet(sh.worksheet("Nutrition"), st.session_state.nutrition_entries, ["id", "date", "type", "foodName", "protein", "carbs", "fat", "calories"])
+    update_worksheet(sh.worksheet("Workout"), st.session_state.workout_entries, ["id", "date", "dayType", "exercise", "weight", "sets", "reps", "distance", "duration", "notes"])
+    update_worksheet(sh.worksheet("BodyMetrics"), st.session_state.body_entries, ["id", "date", "weight", "body_fat"])
+    custom_list = [{"plan_day": pd, "exercise_name": ex} for pd, ex_list in st.session_state.custom_exercises.items() for ex in ex_list]
+    update_worksheet(sh.worksheet("CustomExercises"), custom_list, ["plan_day", "exercise_name"])
+
 if "nutrition_entries" not in st.session_state: st.session_state.nutrition_entries = []
 if "workout_entries" not in st.session_state: st.session_state.workout_entries = []
 if "body_entries" not in st.session_state: st.session_state.body_entries = []
 if "custom_exercises" not in st.session_state: st.session_state.custom_exercises = {}
 if "active_routine" not in st.session_state: st.session_state.active_routine = "4日力量與有氧 (目前)"
 
-# 雲端同步啟動
 if "data_loaded" not in st.session_state:
-    with st.spinner("🔄 正在與 Google 雲端資料庫進行安全同步..."):
-        data = services.load_cloud_data()
+    with st.spinner("🔄 正在與 Google 雲端資料庫同步中..."):
+        data = load_data()
         st.session_state.nutrition_entries = data.get("nutrition", [])
         st.session_state.workout_entries = data.get("workout", [])
         st.session_state.body_entries = data.get("body_metrics", [])
         st.session_state.custom_exercises = data.get("custom_exercises", {})
         st.session_state.data_loaded = True
 
-def wrapper_save():
-    services.save_cloud_data(
-        st.session_state.nutrition_entries,
-        st.session_state.workout_entries,
-        st.session_state.body_entries,
-        st.session_state.custom_exercises
-    )
-
-def get_last_workout(ex_name):
-    sorted_w = sorted(st.session_state.workout_entries, key=lambda x: x["date"], reverse=True) if st.session_state.workout_entries else []
-    for w in sorted_w:
-        if w["exercise"] == ex_name and w.get("dayType") != "Cardio":
+def get_last_workout_data(exercise_name):
+    sorted_workouts = sorted(st.session_state.workout_entries, key=lambda x: x["date"], reverse=True)
+    for w in sorted_workouts:
+        if w["exercise"] == exercise_name and w.get("dayType") != "Cardio":
             return w["weight"], w["sets"], w["reps"]
-    return 0.0, 0, 0
+    return 0.0, 0, 0 
 
-# 全域 PR 彩蛋觸發
+def estimate_1rm(weight, reps):
+    if reps <= 0: return 0.0
+    if reps == 1: return weight
+    return weight / (1.0278 - 0.0278 * reps) if reps < 37 else weight
+
+def calculate_muscle_statuses():
+    now = datetime.now()
+    statuses = []
+    sorted_workouts = sorted(st.session_state.workout_entries, key=lambda x: x["date"], reverse=True)
+    
+    for muscle, info in MUSCLE_GROUPS.items():
+        latest_date = None
+        for w in sorted_workouts:
+            day_type = w["dayType"]
+            if muscle in WORKOUT_MUSCLE_MAPPING.get(day_type, []):
+                latest_date = datetime.fromisoformat(w["date"])
+                break
+        
+        hours_needed = info["recovery_hours"]
+        if latest_date is None:
+            progress = 1.0; remaining = 0.0; color = "green"
+        else:
+            elapsed_hours = (now - latest_date).total_seconds() / 3600.0
+            progress = min(elapsed_hours / hours_needed, 1.0)
+            remaining = max(hours_needed - elapsed_hours, 0.0)
+            if progress >= 0.75: color = "green"
+            elif progress >= 0.25: color = "orange"
+            else: color = "red"
+                
+        statuses.append({"muscle": muscle, "latest_date": latest_date, "progress": progress, "remaining": remaining, "color": color})
+    return statuses
+
 if "show_pr_balloons" in st.session_state and st.session_state.show_pr_balloons:
     st.balloons()
     st.success(st.session_state.new_pr_msg)
     st.session_state.show_pr_balloons = False
 
+# ==========================================
+# 主視圖介面
+# ==========================================
 st.set_page_config(page_title="We Go GYM", page_icon="🏋️", layout="centered")
 st.title("We Go GYM ☁️")
 
@@ -56,7 +203,7 @@ tab_nutri, tab_work, tab_body, tab_recover, tab_hist, tab_analytics = st.tabs([
 ])
 
 # ==========================================
-# 標籤頁：🍃 飲食
+# 4. 今日飲食 
 # ==========================================
 with tab_nutri:
     st.header("新增攝取")
@@ -64,15 +211,14 @@ with tab_nutri:
     
     st.subheader("⚡ 快速加入")
     col_q1, col_q2 = st.columns([1, 2])
-    with col_q1:
-        quick_meal = st.selectbox("快速加入時段", MEAL_TYPES, index=3, label_visibility="collapsed")
+    with col_q1: quick_meal = st.selectbox("快速加入時段", MEAL_TYPES, index=3, label_visibility="collapsed")
     with col_q2:
-        if st.button("➕ 加入乳清蛋白一匙 (120 kcal)"):
+        if st.button("➕ 加入乳清蛋白 (120 kcal)"):
             entry_date = datetime.combine(selected_date_n, datetime.now().time()).isoformat()
             st.session_state.nutrition_entries.append({
                 "id": str(uuid.uuid4()), "date": entry_date, "type": quick_meal, "foodName": "乳清蛋白", "protein": 25.0, "carbs": 2.0, "fat": 1.5, "calories": 120.0
             })
-            with st.spinner("雲端同步中..."): wrapper_save()
+            with st.spinner("同步至雲端中..."): save_data()
             st.success(f"已將乳清蛋白加入至 {quick_meal}！")
             st.rerun()
             
@@ -93,13 +239,14 @@ with tab_nutri:
             st.session_state.nutrition_entries.append({
                 "id": str(uuid.uuid4()), "date": entry_date, "type": selected_meal, "foodName": input_food_name if input_food_name else None, "protein": input_protein, "carbs": input_carbs, "fat": input_fat, "calories": input_calories
             })
-            with st.spinner("雲端同步中..."): wrapper_save()
+            with st.spinner("同步至雲端中..."): save_data()
             st.success("已加入紀錄！")
             st.rerun()
 
     st.divider()
     target_date_str = selected_date_n.strftime("%Y-%m-%d")
     today_nutri = [e for e in st.session_state.nutrition_entries if e["date"].startswith(target_date_str)]
+    
     total_cal = sum(e["calories"] for e in today_nutri)
     total_p = sum(e["protein"] for e in today_nutri)
     total_c = sum(e["carbs"] for e in today_nutri)
@@ -119,11 +266,11 @@ with tab_nutri:
                 st.write(f"**{entry['calories']:.0f} kcal**")
                 if st.button("❌", key=f"del_nutri_{entry['id']}"):
                     st.session_state.nutrition_entries = [e for e in st.session_state.nutrition_entries if e["id"] != entry["id"]]
-                    with st.spinner("雲端同步中..."): wrapper_save()
+                    with st.spinner("同步至雲端中..."): save_data()
                     st.rerun()
 
 # ==========================================
-# 標籤頁：🏋️ 課表
+# 5. 今日課表 (🔥 拔除 Pandas，純 Python 渲染)
 # ==========================================
 with tab_work:
     st.header("新增訓練動作")
@@ -145,10 +292,10 @@ with tab_work:
             if custom_key not in st.session_state.custom_exercises: st.session_state.custom_exercises[custom_key] = []
             if new_ex not in st.session_state.custom_exercises[custom_key] and new_ex not in base_exercises:
                 st.session_state.custom_exercises[custom_key].append(new_ex)
-                with st.spinner("雲端同步中..."): wrapper_save()
+                with st.spinner("同步至雲端中..."): save_data()
                 st.rerun()
 
-    last_w, last_s, last_r = get_last_workout(selected_ex)
+    last_w, last_s, last_r = get_last_workout_data(selected_ex)
 
     with st.form("workout_form", clear_on_submit=False):
         if selected_day == "Cardio" or selected_ex in ["跑步機", "戶外跑", "飛輪", "滑步機", "登階機", "跳繩"]:
@@ -165,7 +312,7 @@ with tab_work:
                 st.session_state.workout_entries.append({
                     "id": str(uuid.uuid4()), "date": entry_date, "dayType": selected_day, "exercise": selected_ex, "distance": input_dist, "duration": input_dur, "notes": input_notes, "weight": 0.0, "sets": 0, "reps": 0
                 })
-                with st.spinner("雲端同步中..."): wrapper_save()
+                with st.spinner("同步至雲端中..."): save_data()
                 st.success("已加入有氧紀錄！")
                 st.rerun()
         else:
@@ -178,14 +325,13 @@ with tab_work:
             if st.form_submit_button("加入課表") and input_sets > 0 and input_reps > 0 and selected_ex != "➕ 新增動作...":
                 entry_date = datetime.combine(selected_date_w, datetime.now().time()).isoformat()
                 
-                # 計算歷史 PR
+                # 計算 PR
                 highest_prev_1rm = 0.0
-                if st.session_state.workout_entries:
-                    valid_history = [w for w in st.session_state.workout_entries if w.get('exercise') == selected_ex and w.get('weight', 0) > 0]
-                    if valid_history:
-                        highest_prev_1rm = max(services.estimate_1rm(w['weight'], w['reps']) for w in valid_history)
+                valid_history = [w for w in st.session_state.workout_entries if w.get('exercise') == selected_ex and w.get('weight', 0) > 0]
+                if valid_history:
+                    highest_prev_1rm = max([estimate_1rm(w['weight'], w['reps']) for w in valid_history])
                 
-                current_estimated_1rm = services.estimate_1rm(input_weight, input_reps)
+                current_estimated_1rm = estimate_1rm(input_weight, input_reps)
                 
                 if highest_prev_1rm > 0.0 and current_estimated_1rm > highest_prev_1rm:
                     st.session_state.show_pr_balloons = True
@@ -194,7 +340,7 @@ with tab_work:
                 st.session_state.workout_entries.append({
                     "id": str(uuid.uuid4()), "date": entry_date, "dayType": selected_day, "exercise": selected_ex, "weight": input_weight, "sets": input_sets, "reps": input_reps, "duration": None, "distance": None, "notes": None
                 })
-                with st.spinner("雲端同步中..."): wrapper_save()
+                with st.spinner("同步至雲端中..."): save_data()
                 st.rerun()
 
     st.divider()
@@ -205,11 +351,18 @@ with tab_work:
     if not today_work:
         st.write("尚未新增動作")
     else:
-        for day, group in pd.DataFrame(today_work).groupby("dayType"):
+        # 🔥 全面改用原生 Dict，封殺 Pandas
+        grouped_work = defaultdict(list)
+        for w in today_work: grouped_work[w['dayType']].append(w)
+        
+        for day, group in grouped_work.items():
             st.markdown(f"#### {day}")
-            for ex, ex_group in group.groupby("exercise"):
+            grouped_ex = defaultdict(list)
+            for w in group: grouped_ex[w['exercise']].append(w)
+            
+            for ex, ex_group in grouped_ex.items():
                 st.markdown(f"**{ex}**")
-                for _, row in ex_group.iterrows():
+                for row in ex_group:
                     col_x, col_y, col_z = st.columns([3, 2, 1])
                     with col_x:
                         if row.get("duration") is not None: st.write(f"⏱️ {row['duration']:.0f} 分鐘" + (f" ({row['notes']})" if row.get('notes') else ""))
@@ -220,11 +373,11 @@ with tab_work:
                     with col_z:
                         if st.button("❌", key=f"del_work_{row['id']}"):
                             st.session_state.workout_entries = [e for e in st.session_state.workout_entries if e["id"] != row["id"]]
-                            with st.spinner("雲端同步中..."): wrapper_save()
+                            with st.spinner("同步至雲端中..."): save_data()
                             st.rerun()
 
 # ==========================================
-# 標籤頁：⚖️ 體重
+# 身體數值紀錄分頁 (🔥 拔除 Pandas)
 # ==========================================
 with tab_body:
     st.header("記錄身體數據")
@@ -233,8 +386,9 @@ with tab_body:
     last_w_body, last_bf = 70.0, 15.0
     if st.session_state.body_entries:
         sorted_body = sorted(st.session_state.body_entries, key=lambda x: x["date"], reverse=True)
-        last_w_body = sorted_body[0].get("weight", 70.0)
-        last_bf = sorted_body[0].get("body_fat", 15.0)
+        if sorted_body:
+            last_w_body = sorted_body[0].get("weight", 70.0)
+            last_bf = sorted_body[0].get("body_fat", 15.0)
 
     with st.form("body_form", clear_on_submit=True):
         col1, col2 = st.columns(2)
@@ -247,32 +401,28 @@ with tab_body:
             st.session_state.body_entries = [e for e in st.session_state.body_entries if not e["date"].startswith(target_date_str)]
             
             st.session_state.body_entries.append({"id": str(uuid.uuid4()), "date": entry_date, "weight": input_bw, "body_fat": input_bf})
-            with st.spinner("雲端同步中..."): wrapper_save()
+            with st.spinner("同步至雲端中..."): save_data()
             st.success("身體數據已更新！")
             st.rerun()
             
     st.divider()
     st.subheader("近期體態變化")
     if st.session_state.body_entries:
-        df_body = pd.DataFrame(st.session_state.body_entries)
-        df_body['date_str'] = df_body['date'].str[:10]
-        df_body = df_body.sort_values(by='date_str', ascending=False).head(5)
-        
-        df_body_display = df_body[['date_str', 'weight', 'body_fat']].copy()
-        df_body_display.rename(columns={'date_str': '日期', 'weight': '體重', 'body_fat': '體脂率'}, inplace=True)
-        df_body_display['體重'] = df_body_display['體重'].apply(lambda x: f"{x:.1f} kg")
-        df_body_display['體脂率'] = df_body_display['體脂率'].apply(lambda x: f"{x:.1f} %" if pd.notnull(x) else "")
-        st.table(df_body_display.set_index('日期'))
+        sorted_body = sorted(st.session_state.body_entries, key=lambda x: x["date"], reverse=True)[:5]
+        for row in sorted_body:
+            date_str = row['date'][:10]
+            bf_str = f" | {row['body_fat']}%" if row.get('body_fat') else ""
+            st.markdown(f"- **{date_str}**: {row['weight']} kg{bf_str}")
     else:
         st.write("尚未有身體紀錄。")
 
 # ==========================================
-# 標籤頁：💪 恢復
+# 6. 身體恢復圖 
 # ==========================================
 with tab_recover:
     st.header("人體恢復狀態儀表板")
     color_map = {"red": "🔴", "orange": "🟠", "green": "🟢"}
-    statuses = services.calculate_muscle_statuses(st.session_state.workout_entries)
+    statuses = calculate_muscle_statuses()
     for status in statuses:
         col1, col2 = st.columns([1, 1])
         with col1:
@@ -286,7 +436,7 @@ with tab_recover:
         st.write("---")
 
 # ==========================================
-# 標籤頁：🕒 歷史
+# 7. 歷史記錄 (🔥 拔除 Pandas)
 # ==========================================
 with tab_hist:
     hist_type = st.radio("選擇檢視歷史：", ["飲食紀錄", "重訓紀錄"], horizontal=True)
@@ -294,13 +444,16 @@ with tab_hist:
     if hist_type == "飲食紀錄":
         if not st.session_state.nutrition_entries: st.write("尚未有任何飲食紀錄")
         else:
-            df_nutri = pd.DataFrame(st.session_state.nutrition_entries)
-            df_nutri['date_str'] = df_nutri['date'].str[:10]
-            for date, group in df_nutri.groupby('date_str', sort=False):
-                with st.expander(f"📅 {date} | 總熱量: {group['calories'].sum():.0f} kcal"):
-                    st.markdown(f"**🔥 日總計 ➔ 碳水: {group['carbs'].sum():.1f}g | 蛋白質: {group['protein'].sum():.1f}g | 脂肪: {group['fat'].sum():.1f}g**")
+            grouped_n_hist = defaultdict(list)
+            for e in st.session_state.nutrition_entries: grouped_n_hist[e['date'][:10]].append(e)
+            
+            for date in sorted(grouped_n_hist.keys(), reverse=True):
+                group = grouped_n_hist[date]
+                total_c = sum(e['calories'] for e in group)
+                with st.expander(f"📅 {date} | 總熱量: {total_c:.0f} kcal"):
+                    st.markdown(f"**🔥 日總計 ➔ 碳水: {sum(e['carbs'] for e in group):.1f}g | 蛋白質: {sum(e['protein'] for e in group):.1f}g | 脂肪: {sum(e['fat'] for e in group):.1f}g**")
                     st.divider()
-                    for _, row in group.iterrows():
+                    for row in group:
                         col_x, col_y = st.columns([4, 1])
                         with col_x:
                             st.write(f"**{row['type']}**" + (f" - {row['foodName']}" if row.get('foodName') else "") + f" : {row['calories']:.0f} kcal")
@@ -308,18 +461,25 @@ with tab_hist:
                         with col_y:
                             if st.button("❌", key=f"del_h_n_{row['id']}"):
                                 st.session_state.nutrition_entries = [e for e in st.session_state.nutrition_entries if e["id"] != row["id"]]
-                                with st.spinner("雲端同步中..."): wrapper_save()
+                                with st.spinner("同步至雲端中..."): save_data()
                                 st.rerun()
     else:
         if not st.session_state.workout_entries: st.write("尚未有任何訓練紀錄")
         else:
-            df_work_hist = pd.DataFrame(st.session_state.workout_entries)
-            df_work_hist['date_str'] = df_work_hist['date'].str[:10]
-            for date, group in df_work_hist.groupby('date_str', sort=False):
-                with st.expander(f"📅 {date} | {', '.join(group['dayType'].unique())}"):
-                    for ex, ex_group in group.groupby('exercise'):
+            grouped_w_hist = defaultdict(list)
+            for e in st.session_state.workout_entries: grouped_w_hist[e['date'][:10]].append(e)
+            
+            for date in sorted(grouped_w_hist.keys(), reverse=True):
+                group = grouped_w_hist[date]
+                day_types = list(set(e['dayType'] for e in group))
+                with st.expander(f"📅 {date} | {', '.join(day_types)}"):
+                    
+                    grouped_ex = defaultdict(list)
+                    for w in group: grouped_ex[w['exercise']].append(w)
+                    
+                    for ex, ex_group in grouped_ex.items():
                         st.write(f"**{ex}**")
-                        for _, row in ex_group.iterrows():
+                        for row in ex_group:
                             col_x, col_y = st.columns([4, 1])
                             with col_x:
                                 if row.get("duration") is not None: st.write(f"- ⏱️ {row['duration']:.0f} 分鐘" + (f" ({row['notes']})" if row.get('notes') else ""))
@@ -327,11 +487,11 @@ with tab_hist:
                             with col_y:
                                 if st.button("❌", key=f"del_h_w_{row['id']}"):
                                     st.session_state.workout_entries = [e for e in st.session_state.workout_entries if e["id"] != row["id"]]
-                                    with st.spinner("雲端同步中..."): wrapper_save()
+                                    with st.spinner("同步至雲端中..."): save_data()
                                     st.rerun()
 
 # ==========================================
-# 標籤頁：📈 數據 (型態安全強化)
+# 9. 數據分析 (保留 Pandas，專為圖表服務)
 # ==========================================
 with tab_analytics:
     analysis_option = st.selectbox(
@@ -340,9 +500,13 @@ with tab_analytics:
     )
     st.divider()
 
+    # 模組 1: 體態與熱量分析
     if analysis_option == "⚖️ 體態與熱量分析":
         st.header("⚖️ 體態與熱量分析")
-        if st.session_state.nutrition_entries and st.session_state.body_entries:
+        has_nutri = bool(st.session_state.nutrition_entries)
+        has_body = bool(st.session_state.body_entries)
+        
+        if has_nutri and has_body:
             df_n = pd.DataFrame(st.session_state.nutrition_entries)
             df_n['date_str'] = df_n['date'].str[:10]
             daily_cal = df_n.groupby('date_str')['calories'].sum().reset_index()
@@ -355,7 +519,6 @@ with tab_analytics:
             merged_df['weight'] = merged_df['weight'].bfill().ffill().fillna(0)
             merged_df['calories'] = merged_df['calories'].fillna(0)
             
-            # 🔥 安全防線：嚴格轉換成帶型態的 DataFrame
             chart_df = pd.DataFrame({
                 "date_str": merged_df["date_str"].astype(str),
                 "calories": merged_df["calories"].astype(float),
@@ -380,6 +543,7 @@ with tab_analytics:
         else:
             st.info("💡 需要同時擁有「飲食紀錄」與「體重紀錄」才能解鎖分析圖表！")
 
+    # 模組 2: 肌肉部位容量佔比
     elif analysis_option == "📊 肌肉部位容量佔比":
         st.header("📊 肌肉部位容量佔比")
         if st.session_state.workout_entries:
@@ -413,6 +577,7 @@ with tab_analytics:
         else:
             st.write("目前尚無任何訓練數據。")
 
+    # 模組 3: 1RM PR 榮譽榜與力量趨勢
     elif analysis_option == "🏆 1RM PR 榮譽榜與力量趨勢":
         st.header("🏆 個人最高紀錄 (1RM PR 榮譽榜)")
         if st.session_state.workout_entries:
@@ -420,7 +585,7 @@ with tab_analytics:
             df_weight_only = df_all[df_all.get('weight', 0) > 0].copy()
             
             if not df_weight_only.empty:
-                df_weight_only['estimated_1rm'] = df_weight_only.apply(lambda row: services.estimate_1rm(row['weight'], row['reps']), axis=1)
+                df_weight_only['estimated_1rm'] = df_weight_only.apply(lambda row: estimate_1rm(row['weight'], row['reps']), axis=1)
                 
                 pr_summary = df_weight_only.groupby('exercise').agg(
                     最高極限重量=('weight', 'max'),
@@ -466,6 +631,7 @@ with tab_analytics:
         else:
             st.write("目前尚無任何訓練數據。")
 
+    # 模組 4: 訓練總容量趨勢
     elif analysis_option == "🏋️ 訓練總容量趨勢":
         st.header("🏋️ 訓練總容量趨勢 (Total Volume)")
         if st.session_state.workout_entries:
