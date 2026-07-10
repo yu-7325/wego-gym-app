@@ -4,7 +4,7 @@ import json
 import os
 from datetime import datetime
 import uuid
-import altair as alt  # 🔥 補上這行最關鍵的繪圖引擎匯入！
+import altair as alt  # 確保專業繪圖引擎完整導入
 import gspread
 from google.oauth2.service_account import Credentials
 
@@ -482,12 +482,12 @@ with tab_hist:
                                     st.rerun()
 
 # ==========================================
-# 9. 數據分析 (🔥 防彈級：固定圖表寬度並移除拉伸設定)
+# 9. 數據分析 (🔥 升級方案三：加入 1RM 長期力量均線走勢圖)
 # ==========================================
 with tab_analytics:
     analysis_option = st.selectbox(
-        "📊 請選擇分析圖表", 
-        ["⚖️ 體態與熱量分析", "📊 肌肉部位容量佔比", "🏆 1RM PR 榮譽榜", "🏋️ 訓練總容量趨勢"]
+        "📊 請選擇 analysis 圖表", 
+        ["⚖️ 體態與熱量分析", "📊 肌肉部位容量佔比", "🏆 1RM PR 榮譽榜與力量趨勢", "🏋️ 訓練總容量趨勢"]
     )
     
     st.divider()
@@ -554,23 +554,23 @@ with tab_analytics:
                     tooltip=[alt.Tooltip('部位', title='部位'), alt.Tooltip('累積總容量 (kg)', title='總容量', format='.1f')]
                 ).properties(width=alt.Step(60))
                 st.altair_chart(muscle_chart)
-                
                 st.caption("觀察重點：檢視各部位的受刺激總量。若推、拉、腿比例嚴重失衡，建議微調課表。")
             else:
                 st.write("目前尚無重量訓練數據可供分析。")
         else:
             st.write("目前尚無任何訓練數據。")
 
-    # 模組 3: 1RM PR 榮譽榜
-    elif analysis_option == "🏆 1RM PR 榮譽榜":
+    # 🔥 升級模組 3: 1RM PR 榮譽榜與力量趨勢 (新增特定動作均線折線圖)
+    elif analysis_option == "🏆 1RM PR 榮譽榜與力量趨勢":
         st.header("🏆 個人最高紀錄 (1RM PR 榮譽榜)")
         if st.session_state.workout_entries:
             df_all = pd.DataFrame(st.session_state.workout_entries)
-            if 'weight' in df_all.columns and not df_all[df_all['weight'] > 0].empty:
-                df_pr = df_all[df_all['weight'] > 0].copy()
-                df_pr['estimated_1rm'] = df_pr.apply(lambda row: estimate_1rm(row['weight'], row['reps']), axis=1)
+            df_weight_only = df_all[df_all['weight'] > 0].copy()
+            
+            if not df_weight_only.empty:
+                df_weight_only['estimated_1rm'] = df_weight_only.apply(lambda row: estimate_1rm(row['weight'], row['reps']), axis=1)
                 
-                pr_summary = df_pr.groupby('exercise').agg(
+                pr_summary = df_weight_only.groupby('exercise').agg(
                     最高極限重量=('weight', 'max'),
                     估算最大肌力_1RM=('estimated_1rm', 'max')
                 ).reset_index()
@@ -581,6 +581,37 @@ with tab_analytics:
                 pr_display['估算最大肌力_1RM'] = pr_display['估算最大肌力_1RM'].apply(lambda x: f"{x:.1f} kg")
                 
                 st.table(pr_display.set_index('訓練動作'))
+                
+                # 🔥 新增功能：單一核心動作 1RM 長期趨勢 + 移動平均線
+                st.write("---")
+                st.subheader("📈 單一動作力量走勢與均線追蹤")
+                
+                unique_exercises = sorted(df_weight_only['exercise'].unique())
+                selected_track_ex = st.selectbox("選擇要追蹤的力量動作：", unique_exercises)
+                
+                df_track = df_weight_only[df_weight_only['exercise'] == selected_track_ex].copy()
+                df_track['date_str'] = df_track['date'].str[:10]
+                
+                # 同一天可能有好幾組，每日取最強的 1RM 作為當天代表
+                df_daily_1rm = df_track.groupby('date_str')['estimated_1rm'].max().reset_index().sort_values('date_str')
+                
+                if not df_daily_1rm.empty:
+                    # 計算 3 次訓練移動平均線
+                    df_daily_1rm['3站移動平均線'] = df_daily_1rm['estimated_1rm'].rolling(window=3, min_periods=1).mean()
+                    df_daily_1rm.rename(columns={'estimated_1rm': '當日估算 1RM'}, inplace=True)
+                    
+                    # 將寬表格 Melt 成群組長表格，這樣用 Altair 畫雙線圖非常安全，絕不當機
+                    df_melted = df_daily_1rm.melt(id_vars=['date_str'], value_vars=['當日估算 1RM', '3站移動平均線'], var_name='指標類型', value_name='重量 (kg)')
+                    
+                    track_chart = alt.Chart(df_melted).mark_line(point=True, strokeWidth=3).encode(
+                        x=alt.X('date_str:O', title='日期'),
+                        y=alt.Y('重量 (kg):Q', title='估算最大力量 (kg)', scale=alt.Scale(zero=False)),
+                        color=alt.Color('指標類型:N', scale=alt.Scale(domain=['當日估算 1RM', '3站移動平均線'], range=['#5C9DF5', '#FFA500'])),
+                        tooltip=['date_str', '指標類型', alt.Tooltip('重量 (kg)', format='.1f')]
+                    ).properties(width=alt.Step(60))
+                    
+                    st.altair_chart(track_chart)
+                    st.caption("💡 藍色線為【當日實際估算 1RM】，橘色線為【3站力量移動平均線】。當橘色均線持續上揚，代表你的絕對力量水平正處於穩健成長期！")
             else:
                 st.write("目前尚無重量訓練數據，快去建立第一筆 PR 吧！")
         else:
@@ -615,7 +646,6 @@ with tab_analytics:
                     tooltip=[alt.Tooltip('period', title=x_title), alt.Tooltip('volume', title='總容量')]
                 ).properties(width=alt.Step(60))
                 st.altair_chart(vol_chart)
-                
                 st.caption("觀察重點：確保圖表呈現『漸進性超負荷』的緩步上升趨勢。超出的圖表會自動產生左右滑動條！")
             else:
                 st.write("目前尚無重量訓練數據可供分析。")
