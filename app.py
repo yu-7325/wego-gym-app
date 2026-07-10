@@ -212,7 +212,7 @@ with tab_nutri:
             st.session_state.nutrition_entries.append({
                 "id": str(uuid.uuid4()), "date": entry_date, "type": quick_meal, "foodName": "乳清蛋白", "protein": 25.0, "carbs": 2.0, "fat": 1.5, "calories": 120.0
             })
-            with St.spinner("同步至雲端中..."): save_data()
+            with st.spinner("同步至雲端中..."): save_data()
             st.success(f"已將乳清蛋白加入至 {quick_meal}！")
             st.rerun()
             
@@ -233,7 +233,7 @@ with tab_nutri:
             st.session_state.nutrition_entries.append({
                 "id": str(uuid.uuid4()), "date": entry_date, "type": selected_meal, "foodName": input_food_name if input_food_name else None, "protein": input_protein, "carbs": input_carbs, "fat": input_fat, "calories": input_calories
             })
-            with St.spinner("同步至雲端中..."): save_data()
+            with st.spinner("同步至雲端中..."): save_data()
             st.success("已加入紀錄！")
             st.rerun()
 
@@ -259,11 +259,11 @@ with tab_nutri:
                 st.write(f"**{entry['calories']:.0f} kcal**")
                 if st.button("❌", key=f"del_nutri_{entry['id']}"):
                     st.session_state.nutrition_entries = [e for e in st.session_state.nutrition_entries if e["id"] != entry["id"]]
-                    with St.spinner("同步至雲端中..."): save_data()
+                    with st.spinner("同步至雲端中..."): save_data()
                     st.rerun()
 
 # ==========================================
-# 5. 今日課表 (優化方案二：串接 PR 比對機制)
+# 5. 今日課表 
 # ==========================================
 with tab_work:
     st.header("新增訓練動作")
@@ -285,7 +285,7 @@ with tab_work:
             if custom_key not in st.session_state.custom_exercises: st.session_state.custom_exercises[custom_key] = []
             if new_ex not in st.session_state.custom_exercises[custom_key] and new_ex not in base_exercises:
                 st.session_state.custom_exercises[custom_key].append(new_ex)
-                with St.spinner("同步至雲端中..."): save_data()
+                with st.spinner("同步至雲端中..."): save_data()
                 st.rerun()
 
     last_w, last_s, last_r = get_last_workout_data(selected_ex)
@@ -305,7 +305,7 @@ with tab_work:
                 st.session_state.workout_entries.append({
                     "id": str(uuid.uuid4()), "date": entry_date, "dayType": selected_day, "exercise": selected_ex, "distance": input_dist, "duration": input_dur, "notes": input_notes, "weight": 0.0, "sets": 0, "reps": 0
                 })
-                with St.spinner("同步至雲端中..."): save_data()
+                with st.spinner("同步至雲端中..."): save_data()
                 st.success("已加入有氧紀錄！")
                 st.rerun()
         else:
@@ -328,7 +328,6 @@ with tab_work:
                 
                 current_estimated_1rm = estimate_1rm(input_weight, input_reps)
                 
-                # 如果不是第一次練該動作，且這次推算出的 1RM 超過以往紀錄
                 if highest_prev_1rm > 0.0 and current_estimated_1rm > highest_prev_1rm:
                     st.session_state.show_pr_balloons = True
                     st.session_state.new_pr_msg = f"🏋️‍♂️ 突破天際！{selected_ex} 創下全新個人 PR！估算 1RM 達到 {current_estimated_1rm:.1f} kg (進步 {current_estimated_1rm - highest_prev_1rm:.1f} kg)！"
@@ -336,7 +335,7 @@ with tab_work:
                 st.session_state.workout_entries.append({
                     "id": str(uuid.uuid4()), "date": entry_date, "dayType": selected_day, "exercise": selected_ex, "weight": input_weight, "sets": input_sets, "reps": input_reps, "duration": None, "distance": None, "notes": None
                 })
-                with St.spinner("同步至雲端中..."): save_data()
+                with st.spinner("同步至雲端中..."): save_data()
                 st.rerun()
 
     st.divider()
@@ -363,7 +362,7 @@ with tab_work:
                     with col_z:
                         if st.button("❌", key=f"del_work_{row['id']}"):
                             st.session_state.workout_entries = [e for e in st.session_state.workout_entries if e["id"] != row["id"]]
-                            with St.spinner("同步至雲端中..."): save_data()
+                            with st.spinner("同步至雲端中..."): save_data()
                             st.rerun()
 
 # ==========================================
@@ -386,7 +385,7 @@ with tab_recover:
         st.write("---")
 
 # ==========================================
-# 7. 飲食記錄 & 8. 重訓記錄 (保留雲端歷史刪除)
+# 7. 飲食記錄 & 8. 重訓記錄
 # ==========================================
 with tab_hist_nutri:
     st.header("歷史飲食記錄")
@@ -406,7 +405,7 @@ with tab_hist_nutri:
                     with col_y:
                         if st.button("❌", key=f"del_h_n_{row['id']}"):
                             st.session_state.nutrition_entries = [e for e in st.session_state.nutrition_entries if e["id"] != row["id"]]
-                            with St.spinner("同步至雲端中..."): save_data()
+                            with st.spinner("同步至雲端中..."): save_data()
                             st.rerun()
 
 with tab_hist_work:
@@ -427,11 +426,11 @@ with tab_hist_work:
                         with col_y:
                             if st.button("❌", key=f"del_h_w_{row['id']}"):
                                 st.session_state.workout_entries = [e for e in st.session_state.workout_entries if e["id"] != row["id"]]
-                                with St.spinner("同步至雲端中..."): save_data()
+                                with st.spinner("同步至雲端中..."): save_data()
                                 st.rerun()
 
 # ==========================================
-# 9. 數據分析 (優化方案三：新增 1RM PR 榮譽榜)
+# 9. 數據分析 
 # ==========================================
 with tab_analytics:
     st.header("🏆 個人最高紀錄 (1RM PR 榮譽榜)")
@@ -441,7 +440,6 @@ with tab_analytics:
             df_pr = df_all[df_all['weight'] > 0].copy()
             df_pr['estimated_1rm'] = df_pr.apply(lambda row: estimate_1rm(row['weight'], row['reps']), axis=1)
             
-            # 使用 Pandas 聚合彙整出每個動作的最強紀錄
             pr_summary = df_pr.groupby('exercise').agg(
                 最高極限重量=('weight', 'max'),
                 估算最大肌力_1RM=('estimated_1rm', 'max')
