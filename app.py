@@ -60,7 +60,7 @@ ROUTINE_PLANS = {
 }
 
 # ==========================================
-# 2. 雲端資料庫串接與狀態初始化 (🔥 新增 BodyMetrics 工作表)
+# 2. 雲端資料庫串接與狀態初始化
 # ==========================================
 @st.cache_resource
 def get_gsheet_client():
@@ -71,7 +71,7 @@ def get_gsheet_client():
     return gspread.authorize(creds)
 
 def ensure_worksheets(sh):
-    expected_sheets = ["Nutrition", "Workout", "CustomExercises", "BodyMetrics"] # 加入身體數值表
+    expected_sheets = ["Nutrition", "Workout", "CustomExercises", "BodyMetrics"]
     existing_sheets = [ws.title for ws in sh.worksheets()]
     for ws_name in expected_sheets:
         if ws_name not in existing_sheets:
@@ -194,7 +194,7 @@ if "show_pr_balloons" in st.session_state and st.session_state.show_pr_balloons:
     st.session_state.show_pr_balloons = False
 
 # ==========================================
-# 主視圖介面 (🔥 擴充標籤頁)
+# 主視圖介面
 # ==========================================
 st.set_page_config(page_title="We Go GYM", page_icon="🏋️", layout="centered")
 st.title("We Go GYM ☁️")
@@ -373,13 +373,12 @@ with tab_work:
                             st.rerun()
 
 # ==========================================
-# 新增：身體數值紀錄分頁
+# 新增：身體數值紀錄分頁 (🔥 捨棄高風險 Styler，改用安全字串格式化)
 # ==========================================
 with tab_body:
     st.header("記錄身體數據")
     selected_date_b = st.date_input("📝 選擇紀錄日期", datetime.now().date(), key="body_date")
     
-    # 尋找上次記錄作為預設值
     last_w_body, last_bf = 70.0, 15.0
     if st.session_state.body_entries:
         sorted_body = sorted(st.session_state.body_entries, key=lambda x: x["date"], reverse=True)
@@ -389,20 +388,15 @@ with tab_body:
 
     with st.form("body_form", clear_on_submit=True):
         col1, col2 = st.columns(2)
-        with col1:
-            input_bw = st.number_input("體重 (kg)", min_value=30.0, max_value=200.0, step=0.1, value=float(last_w_body))
-        with col2:
-            input_bf = st.number_input("體脂率 (%) [選填]", min_value=0.0, max_value=60.0, step=0.1, value=float(last_bf))
+        with col1: input_bw = st.number_input("體重 (kg)", min_value=30.0, max_value=200.0, step=0.1, value=float(last_w_body))
+        with col2: input_bf = st.number_input("體脂率 (%) [選填]", min_value=0.0, max_value=60.0, step=0.1, value=float(last_bf))
             
         if st.form_submit_button("儲存數據"):
             entry_date = datetime.combine(selected_date_b, datetime.now().time()).isoformat()
-            # 檢查是否同一天已有紀錄，若有則覆蓋
             target_date_str = selected_date_b.strftime("%Y-%m-%d")
             st.session_state.body_entries = [e for e in st.session_state.body_entries if not e["date"].startswith(target_date_str)]
             
-            st.session_state.body_entries.append({
-                "id": str(uuid.uuid4()), "date": entry_date, "weight": input_bw, "body_fat": input_bf
-            })
+            st.session_state.body_entries.append({"id": str(uuid.uuid4()), "date": entry_date, "weight": input_bw, "body_fat": input_bf})
             with st.spinner("同步至雲端中..."): save_data()
             st.success("身體數據已更新！")
             st.rerun()
@@ -412,8 +406,15 @@ with tab_body:
     if st.session_state.body_entries:
         df_body = pd.DataFrame(st.session_state.body_entries)
         df_body['date_str'] = df_body['date'].str[:10]
-        df_body = df_body.sort_values(by='date_str', ascending=False).head(5) # 只顯示最近 5 筆
-        st.dataframe(df_body[['date_str', 'weight', 'body_fat']].style.format({"weight": "{:.1f} kg", "body_fat": "{:.1f} %"}), hide_index=True, use_container_width=True)
+        df_body = df_body.sort_values(by='date_str', ascending=False).head(5)
+        
+        # 使用安全的字串格式化，避免 PyArrow 記憶體崩潰
+        df_body_display = df_body[['date_str', 'weight', 'body_fat']].copy()
+        df_body_display.rename(columns={'date_str': '日期', 'weight': '體重', 'body_fat': '體脂率'}, inplace=True)
+        df_body_display['體重'] = df_body_display['體重'].apply(lambda x: f"{x:.1f} kg")
+        df_body_display['體脂率'] = df_body_display['體脂率'].apply(lambda x: f"{x:.1f} %" if pd.notnull(x) else "")
+        
+        st.dataframe(df_body_display, hide_index=True, width="stretch")
     else:
         st.write("尚未有身體紀錄。")
 
@@ -437,7 +438,7 @@ with tab_recover:
         st.write("---")
 
 # ==========================================
-# 7. 歷史記錄 (合併為單一 Tab 節省空間)
+# 7. 歷史記錄 
 # ==========================================
 with tab_hist:
     hist_type = st.radio("選擇檢視歷史：", ["飲食紀錄", "重訓紀錄"], horizontal=True)
@@ -482,7 +483,7 @@ with tab_hist:
                                     st.rerun()
 
 # ==========================================
-# 9. 數據分析 (🔥 新增：體重與熱量交叉分析雙軸圖)
+# 9. 數據分析 (🔥 修復 width="stretch" 警告與 ffill 語法)
 # ==========================================
 with tab_analytics:
     st.header("⚖️ 體態與熱量交叉分析")
@@ -498,10 +499,9 @@ with tab_analytics:
         df_b = pd.DataFrame(st.session_state.body_entries)
         df_b['date_str'] = df_b['date'].str[:10]
         
-        # 合併熱量與體重資料
-        merged_df = pd.merge(daily_cal, df_b[['date_str', 'weight']], on='date_str', how='outer').fillna(method='ffill').fillna(0)
+        # 修復舊版 ffill 語法
+        merged_df = pd.merge(daily_cal, df_b[['date_str', 'weight']], on='date_str', how='outer').ffill().fillna(0)
         
-        # 繪製 Altair 雙軸圖
         base = alt.Chart(merged_df).encode(x=alt.X('date_str:O', title='日期'))
         bar = base.mark_bar(opacity=0.6, color='#5C9DF5').encode(
             y=alt.Y('calories:Q', title='攝取熱量 (kcal)'),
@@ -513,7 +513,7 @@ with tab_analytics:
         )
         
         chart_dual = alt.layer(bar, line).resolve_scale(y='independent').properties(width=alt.Step(60))
-        st.altair_chart(chart_dual, use_container_width=True)
+        st.altair_chart(chart_dual, width="stretch")
         st.caption("觀察重點：紅線為體重趨勢，藍柱為熱量。可評估目前的熱量盈餘/缺口是否達到預期目標。")
     else:
         st.info("💡 需要同時擁有「飲食紀錄」與「體重紀錄」才能解鎖交叉分析圖表！")
@@ -532,7 +532,12 @@ with tab_analytics:
                 估算最大肌力_1RM=('estimated_1rm', 'max')
             ).reset_index()
             
-            st.dataframe(pr_summary.style.format({"最高極限重量": "{:.1f} kg", "估算最大肌力_1RM": "{:.1f} kg"}), use_container_width=True)
+            # 捨棄高風險 Styler，改用安全字串格式化
+            pr_display = pr_summary.copy()
+            pr_display['最高極限重量'] = pr_display['最高極限重量'].apply(lambda x: f"{x:.1f} kg")
+            pr_display['估算最大肌力_1RM'] = pr_display['估算最大肌力_1RM'].apply(lambda x: f"{x:.1f} kg")
+            
+            st.dataframe(pr_display, hide_index=True, width="stretch")
         else:
             st.write("目前尚無重量訓練數據，快去建立第一筆 PR 吧！")
     else:
@@ -563,4 +568,4 @@ with tab_analytics:
                 x=alt.X('period:O', title=x_title, sort=None), y=alt.Y('volume:Q', title='總容量 (kg)'),
                 tooltip=[alt.Tooltip('period', title=x_title), alt.Tooltip('volume', title='總容量')]
             ).properties(width=alt.Step(60))
-            st.altair_chart(chart, use_container_width=True)
+            st.altair_chart(chart, width="stretch")
