@@ -493,7 +493,7 @@ with tab_hist:
                                     st.rerun()
 
 # ==========================================
-# 9. 數據分析 (🔥 解除寬度封印，完美滿版呈現)
+# 9. 數據分析
 # ==========================================
 with tab_analytics:
     analysis_option = st.selectbox(
@@ -529,7 +529,6 @@ with tab_analytics:
                 y=alt.Y('calories:Q', title='熱量 (kcal)'),
                 tooltip=[alt.Tooltip('date_str:O', title='日期'), alt.Tooltip('calories:Q', title='熱量 (kcal)')]
             )
-            # 加上 use_container_width=True 讓圖表自動完美滿版
             st.altair_chart(cal_chart, use_container_width=True)
             
             st.markdown("#### 體重變化 (kg)")
@@ -618,7 +617,8 @@ with tab_analytics:
                     chart_df = pd.DataFrame({
                         "date_str": df_melted["date_str"].astype(str),
                         "指標類型": df_melted["指標類型"].astype(str),
-                        "重量": df_melted["重量"].astype(float)
+                        # 🔥 關鍵修復：補回被遺漏的 (kg) 字眼！
+                        "重量": df_melted["重量 (kg)"].astype(float)
                     })
                     
                     track_chart = alt.Chart(chart_df).mark_line(point=True, strokeWidth=3).encode(
