@@ -7,13 +7,6 @@ from collections import defaultdict
 from config import ROUTINE_PLANS
 import services
 
-def trigger_save():
-    services.save_data(
-        st.session_state.nutrition_entries, st.session_state.workout_entries,
-        st.session_state.body_entries, st.session_state.custom_exercises
-    )
-
-# ─── 🔥 終極加速：將高頻互動區塊封裝為 Fragment，拉動滑桿不再重跑全局 ───
 @st.fragment
 def interactive_workout_panel(selected_ex, selected_day, selected_date_w, last_w, last_s, last_r):
     recommended_weight_val = float(last_w)
@@ -28,9 +21,16 @@ def interactive_workout_panel(selected_ex, selected_day, selected_date_w, last_w
         if max_1rm > 0:
             with st.expander("🧮 展開 %1RM 智慧配重試算機", expanded=False):
                 col_pct, col_calc = st.columns([2, 1])
+                
+                # ─── 🔥 根據側邊欄大週期目標，自動預設最佳強度滑桿 ───
+                current_goal = st.session_state.get("current_goal", "🥩 增肌期 (Hypertrophy)")
+                if "力量" in current_goal: default_pct = 85
+                elif "減脂" in current_goal: default_pct = 75
+                elif "復健" in current_goal: default_pct = 50
+                else: default_pct = 80 # 增肌期
+                
                 with col_pct:
-                    # 在這裡拉動滑桿，只有這個 Panel 會重繪，系統極度流暢！
-                    target_pct = st.slider("今日目標強度 (% 1RM)", min_value=40, max_value=100, value=80, step=5)
+                    target_pct = st.slider("今日目標強度 (% 1RM)", min_value=40, max_value=100, value=default_pct, step=5)
                 with col_calc:
                     recommended_weight_val = round((max_1rm * (target_pct / 100)) / 2.5) * 2.5
                     st.metric(label="建議重量", value=f"{recommended_weight_val:.1f} kg")
@@ -51,7 +51,7 @@ def interactive_workout_panel(selected_ex, selected_day, selected_date_w, last_w
                     "id": str(uuid.uuid4()), "date": entry_date, "dayType": selected_day, "exercise": selected_ex, "distance": input_dist, "duration": input_dur, "notes": input_notes, "weight": 0.0, "sets": 0, "reps": 0, "rpe": 0.0, "pump": 3.0, "joint_pain": 1.0
                 })
                 st.session_state.unsynced = True
-                st.rerun() # 送出表單後，主動觸發全局更新以同步歷史清單
+                st.rerun()
         else:
             if last_s > 0: st.caption(f"💡 上次歷史數據：{last_w}kg | {last_s}組 x {last_r}下")
             col1, col2, col3 = st.columns(3)
@@ -85,9 +85,11 @@ def interactive_workout_panel(selected_ex, selected_day, selected_date_w, last_w
                 st.session_state.unsynced = True
                 st.rerun()
 
-# 主渲染函數
 def render():
     st.header("🏋️ 訓練課表紀錄")
+    # ─── 顯示當前大週期動態狀態 ───
+    st.caption(f"当前大周期战术配置：`{st.session_state.current_goal}`")
+    
     selected_date_w = st.date_input("📝 選擇紀錄日期", datetime.now().date(), key="work_date")
     
     routine_options = list(ROUTINE_PLANS.keys())
@@ -124,7 +126,6 @@ def render():
 
     last_w, last_s, last_r = services.get_last_workout_data(st.session_state.workout_entries, selected_ex)
 
-    # 呼叫 Fragment 區域 (此區塊具備獨立運算的防卡頓護盾)
     if selected_ex != "➕ 新增動作...":
         interactive_workout_panel(selected_ex, selected_day, selected_date_w, last_w, last_s, last_r)
 
