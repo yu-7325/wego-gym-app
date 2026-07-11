@@ -60,10 +60,14 @@ with st.sidebar:
         "body_metrics": st.session_state.body_entries,
         "custom_exercises": st.session_state.custom_exercises
     }
+    
+    # 🔥 已經修復 Bug：將 json_backup 改回官方正確的 data 參數
     st.download_button(
-        label="📥 下載完整資料庫 (JSON)", json_backup=json.dumps(backup_data, ensure_ascii=False, indent=2),
+        label="📥 下載完整資料庫 (JSON)", 
+        data=json.dumps(backup_data, ensure_ascii=False, indent=2),
         file_name=f"WeGoGYM_Backup_{datetime.now().strftime('%Y%m%d_%H%M')}.json",
-        mime="application/json", use_container_width=True
+        mime="application/json", 
+        use_container_width=True
     )
 
 st.title("We Go GYM ☁️")
