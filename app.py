@@ -3,13 +3,11 @@
 import streamlit as st
 
 # ==========================================
-# 1. 網頁初始設定 (必須在最上方)
+# 1. 網頁初始設定 (絕對第一行)
 # ==========================================
 st.set_page_config(page_title="We Go GYM", page_icon="🏋️", layout="centered")
 
 import pandas as pd
-import json
-import os
 from datetime import datetime
 import uuid
 import altair as alt
@@ -128,8 +126,13 @@ with tab_work:
     st.header("新增訓練動作")
     selected_date_w = st.date_input("📝 選擇紀錄日期", datetime.now().date(), key="work_date")
     
-    st.session_state.active_routine = st.selectbox("當前執行課表", list(ROUTINE_PLANS.keys()), index=list(ROUTINE_PLANS.keys()), label_visibility="visible")
-    current_plan = ROUTINE_PLANS[st.session_state.active_routine]
+    # 防止 APIException：使用 key 綁定
+    routine_options = list(ROUTINE_PLANS.keys())
+    default_index = routine_options.index(st.session_state.active_routine) if st.session_state.active_routine in routine_options else 0
+    selected_routine = st.selectbox("當前執行課表", routine_options, index=default_index, key="routine_selector")
+    st.session_state.active_routine = selected_routine
+    current_plan = ROUTINE_PLANS[selected_routine]
+    
     selected_day = st.selectbox("訓練日", current_plan["days"])
     
     base_exercises = current_plan["exercises"].get(selected_day, [])
@@ -174,7 +177,7 @@ with tab_work:
             with col2: input_sets = st.number_input("組數", min_value=0, step=1, value=int(last_s) if last_s > 0 else 4)
             with col3: input_reps = st.number_input("次數 (下)", min_value=0, step=1, value=int(last_r) if last_r > 0 else 8)
             
-            # 🔥 新增：RPE 強度選擇滑桿
+            # 🔥 加入 RPE 控制
             input_rpe = st.select_slider(
                 "🎯 訓練強度 (RPE)",
                 options=[6.0, 6.5, 7.0, 7.5, 8.0, 8.5, 9.0, 9.5, 10.0],
@@ -235,7 +238,7 @@ with tab_work:
                             st.rerun()
 
 # ==========================================
-# 6. 身體數值紀錄分頁 
+# 標籤頁：⚖️ 體重
 # ==========================================
 with tab_body:
     st.header("記錄身體數據")
@@ -275,7 +278,7 @@ with tab_body:
         st.write("尚未有身體紀錄。")
 
 # ==========================================
-# 7. 身體恢復圖 
+# 標籤頁：💪 恢復
 # ==========================================
 with tab_recover:
     st.header("人體恢復狀態儀表板")
@@ -294,7 +297,7 @@ with tab_recover:
         st.write("---")
 
 # ==========================================
-# 8. 歷史記錄
+# 標籤頁：🕒 歷史
 # ==========================================
 with tab_hist:
     hist_type = st.radio("選擇檢視歷史：", ["飲食紀錄", "重訓紀錄"], horizontal=True)
@@ -350,7 +353,7 @@ with tab_hist:
                                     st.rerun()
 
 # ==========================================
-# 9. 數據分析 (🔥 整合 RPE 強度控制過濾器)
+# 標籤頁：📈 數據 (修正 KeyError, 保留 RPE 過濾)
 # ==========================================
 with tab_analytics:
     analysis_option = st.selectbox(
@@ -359,10 +362,9 @@ with tab_analytics:
     )
     st.divider()
 
-    # 🔥 全域過濾器開關（只對重訓相關圖表生效）
     only_effective = False
     if analysis_option in ["📊 肌肉部位容量佔比", "🏋️ 訓練總容量趨勢"]:
-        only_effective = st.checkbox("🎯 僅篩選高強度有效組 (RPE ≥ 8.0)", value=False, help="開啟後，圖表將自動過濾並扣除 RPE 低於 8.0 的熱身組與輕重量組")
+        only_effective = st.checkbox("🎯 僅篩選高強度有效組 (RPE ≥ 8.0)", value=False, help="開啟後，圖表將自動扣除 RPE 低於 8.0 的熱身組與輕重量組")
 
     if analysis_option == "⚖️ 體態與熱量分析":
         st.header("⚖️ 體態與熱量分析")
@@ -411,7 +413,6 @@ with tab_analytics:
             
             for w in st.session_state.workout_entries:
                 if w.get("weight", 0) > 0 and w.get("sets", 0) > 0 and w.get("reps", 0) > 0:
-                    # 🔥 檢查 RPE 條件
                     if only_effective and w.get("rpe", 8.0) < 8.0:
                         continue
                     vol = w["weight"] * w["sets"] * w["reps"]
@@ -435,7 +436,7 @@ with tab_analytics:
                 )
                 st.altair_chart(muscle_chart, use_container_width=True)
             else:
-                st.write("目前尚無符合篩選條件的重訓數據。")
+                st.write("目前尚無符合條件的重量訓練數據。")
         else:
             st.write("目前尚無任何訓練數據。")
 
@@ -482,14 +483,15 @@ with tab_analytics:
                     chart_df = pd.DataFrame({
                         "date_str": df_melted["date_str"].astype(str),
                         "指標類型": df_melted["指標類型"].astype(str),
-                        "重量": df_melted["重量 (kg)"].astype(float)
+                        # 修正這裡的 KeyError
+                        "重量 (kg)": df_melted["重量 (kg)"].astype(float)
                     })
                     
                     track_chart = alt.Chart(chart_df).mark_line(point=True, strokeWidth=3).encode(
                         x=alt.X('date_str:O', title='日期'),
-                        y=alt.Y('重量:Q', title='估算最大力量 (kg)', scale=alt.Scale(zero=False)),
+                        y=alt.Y('重量 (kg):Q', title='估算最大力量 (kg)', scale=alt.Scale(zero=False)),
                         color=alt.Color('指標類型:N', scale=alt.Scale(domain=['當日估算 1RM', '3站移動平均線'], range=['#5C9DF5', '#FFA500'])),
-                        tooltip=[alt.Tooltip('date_str:O', title='日期'), alt.Tooltip('指標類型:N', title='類型'), alt.Tooltip('重量:Q', title='重量 (kg)', format='.1f')]
+                        tooltip=[alt.Tooltip('date_str:O', title='日期'), alt.Tooltip('指標類型:N', title='類型'), alt.Tooltip('重量 (kg):Q', title='重量 (kg)', format='.1f')]
                     )
                     st.altair_chart(track_chart, use_container_width=True)
             else:
@@ -506,7 +508,6 @@ with tab_analytics:
                 if col not in df_w.columns:
                     df_w[col] = 0.0 if col in ['weight', 'sets', 'reps', 'rpe'] else ""
             
-            # 🔥 檢查 RPE 條件
             if only_effective:
                 df_w = df_w[df_w['rpe'] >= 8.0]
                     
