@@ -40,6 +40,8 @@ def load_data():
         r["duration"] = float(r["duration"]) if r["duration"] != "" else None
         r["distance"] = float(r["distance"]) if r["distance"] != "" else None
         r["notes"] = str(r["notes"]) if r["notes"] != "" else None
+        # 🔥 新增：安全讀取 RPE 欄位，若舊資料為空則給予預設值 8.0 (視為正式組)
+        r["rpe"] = float(r["rpe"]) if ("rpe" in r and r["rpe"] != "") else 8.0
 
     body_records = sh.worksheet("BodyMetrics").get_all_records()
     for r in body_records:
@@ -72,7 +74,8 @@ def save_data(nutrition_entries, workout_entries, body_entries, custom_exercises
     gc = get_gsheet_client()
     sh = gc.open(SHEET_NAME)
     update_worksheet(sh.worksheet("Nutrition"), nutrition_entries, ["id", "date", "type", "foodName", "protein", "carbs", "fat", "calories"])
-    update_worksheet(sh.worksheet("Workout"), workout_entries, ["id", "date", "dayType", "exercise", "weight", "sets", "reps", "distance", "duration", "notes"])
+    # 🔥 新增：在寫入雲端試算表的標頭與對應清單中，追加 "rpe" 欄位
+    update_worksheet(sh.worksheet("Workout"), workout_entries, ["id", "date", "dayType", "exercise", "weight", "sets", "reps", "distance", "duration", "notes", "rpe"])
     update_worksheet(sh.worksheet("BodyMetrics"), body_entries, ["id", "date", "weight", "body_fat"])
     custom_list = [{"plan_day": pd, "exercise_name": ex} for pd, ex_list in custom_exercises.items() for ex in ex_list]
     update_worksheet(sh.worksheet("CustomExercises"), custom_list, ["plan_day", "exercise_name"])
