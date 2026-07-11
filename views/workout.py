@@ -88,7 +88,7 @@ def interactive_workout_panel(selected_ex, selected_day, selected_date_w, last_w
 def render():
     st.header("🏋️ 訓練課表紀錄")
     # ─── 顯示當前大週期動態狀態 ───
-    st.caption(f"当前大周期战术配置：`{st.session_state.current_goal}`")
+    st.caption(f"當前大周期戰術配置：`{st.session_state.current_goal}`")
     
     selected_date_w = st.date_input("📝 選擇紀錄日期", datetime.now().date(), key="work_date")
     
