@@ -4,12 +4,18 @@ import streamlit as st
 import pandas as pd
 import altair as alt
 from datetime import datetime
-from collections import defaultdict  # 🔥 就是漏了這一行！補上啦！
+from collections import defaultdict  # 確保核心分類字典載入正確
 from config import MUSCLE_GROUPS, WORKOUT_MUSCLE_MAPPING
 import services
 
 def render():
     st.header("📈 量化訓練大數據中樞")
+    
+    # 讀取全域大週期目標狀態
+    current_goal = st.session_state.get("current_goal", "🥩 增肌期 (Hypertrophy)")
+    st.caption(f"📊 當前主戰術目標連動中：`{current_goal}`")
+    
+    # ─── 7 大硬核重訓科學視角選單 ───
     analysis_option = st.selectbox(
         "🔮 切換數據分析視角", 
         [
@@ -24,10 +30,14 @@ def render():
     )
     st.divider()
 
+    # 特定容量圖表專用的高強度過濾器
     only_effective = False
     if analysis_option in ["📊 肌肉部位容量與有效組數 (肌肥大指標)", "🏋️ 訓練總容量趨勢"]:
         only_effective = st.checkbox("🎯 僅篩選高強度有效組 (RPE ≥ 8.0) 進行總量計算", value=False)
 
+    # ==========================================
+    # 視角一：⚖️ 體態與熱量分析 (含 7 日均線)
+    # ==========================================
     if analysis_option == "⚖️ 體態與熱量分析 (含 7 日均線)":
         if st.session_state.nutrition_entries and st.session_state.body_entries:
             df_n = pd.DataFrame(st.session_state.nutrition_entries)
@@ -82,6 +92,9 @@ def render():
         else:
             st.info("💡 需要同時擁有「飲食紀錄」與「體重紀錄」才能解鎖分析圖表！")
 
+    # ==========================================
+    # 視角二：📊 肌肉部位容量與有效組數 (肌肥大指標)
+    # ==========================================
     elif analysis_option == "📊 肌肉部位容量與有效組數 (肌肥大指標)":
         if st.session_state.workout_entries:
             muscle_vol_data = {m: 0.0 for m in MUSCLE_GROUPS.keys()}
@@ -110,29 +123,54 @@ def render():
             
             if has_valid_data:
                 st.markdown("#### 🔥 近 7 日單部位有效組數 (Hard Sets)")
+                
                 sets_list = []
                 for m, s in hard_sets_data.items():
-                    dynamic_mrv = services.calculate_dynamic_mrv(st.session_state.workout_entries, m)
+                    # 傳入全域大週期目標動態精算個人恢復上限
+                    dynamic_mrv = services.calculate_dynamic_mrv(st.session_state.workout_entries, m, current_goal)
+                    
                     if s < 8: status = "維持期 (不足 8 組)"
                     elif s <= dynamic_mrv: status = "黃金生長期 (適當)"
                     else: status = "疲勞警戒 (超量)"
-                    sets_list.append({"部位": m, "有效組數": s, "狀態": status, "當前MRV上限": dynamic_mrv})
+                    
+                    sets_list.append({
+                        "部位": m, 
+                        "有效組數": s, 
+                        "狀態": status, 
+                        "當前MRV上限": dynamic_mrv
+                    })
                 
                 df_sets = pd.DataFrame(sets_list)
-                color_scale = alt.Scale(domain=["維持期 (不足 8 組)", "黃金生長期 (適當)", "疲勞警戒 (超量)"], range=["#5C9DF5", "#2e7d32", "#FF4B4B"])
+                st.caption("長條圖顏色代表您的當前狀態。若您的個人 MRV 因週期目標或疲勞下修，柱子將會提早轉為紅色警戒。")
+                
+                color_scale = alt.Scale(
+                    domain=["維持期 (不足 8 組)", "黃金生長期 (適當)", "疲勞警戒 (超量)"], 
+                    range=["#5C9DF5", "#2e7d32", "#FF4B4B"]
+                )
+                
                 sets_chart = alt.Chart(df_sets).mark_bar(opacity=0.85).encode(
                     x=alt.X('部位:O', title='肌肉部位', sort='-y'),
                     y=alt.Y('有效組數:Q', title='有效組數 (組)'),
                     color=alt.Color('狀態:N', scale=color_scale, title="生長狀態"),
                     tooltip=['部位', '有效組數', '狀態', alt.Tooltip('當前MRV上限', title="專屬過度訓練界線")]
                 )
-                rule_8 = alt.Chart(pd.DataFrame({'y': [8]})).mark_rule(color='#FFA500', strokeDash=[5, 5], strokeWidth=2).encode(y='y:Q')
-                rule_18 = alt.Chart(pd.DataFrame({'y': [18]})).mark_rule(color='#FF4B4B', strokeDash=[5, 5], strokeWidth=2).encode(y='y:Q')
-                st.altair_chart(sets_chart + rule_8 + rule_18, use_container_width=True)
                 
+                # 根據當前目標動態決定全域紅色虛線基準落點
+                if "力量" in current_goal: line_mrv = 14
+                elif "減脂" in current_goal: line_mrv = 15
+                elif "復健" in current_goal: line_mrv = 8
+                else: line_mrv = 18
+                
+                rule_8 = alt.Chart(pd.DataFrame({'y': [8]})).mark_rule(color='#FFA500', strokeDash=[5, 5], strokeWidth=2).encode(y='y:Q')
+                rule_mrv = alt.Chart(pd.DataFrame({'y': [line_mrv]})).mark_rule(color='#FF4B4B', strokeDash=[5, 5], strokeWidth=2).encode(y='y:Q')
+                
+                st.altair_chart(sets_chart + rule_8 + rule_mrv, use_container_width=True)
+                
+                # 下方累積容量圖
                 st.markdown("#### 📦 歷史累積總訓練容量 (Tonnage)")
                 df_muscle = pd.DataFrame(list(muscle_vol_data.items()), columns=['部位', '累積總容量 (kg)'])
                 chart_df = pd.DataFrame({"部位": df_muscle["部位"].astype(str), "累積總容量": df_muscle["累積總容量 (kg)"].astype(float)})
+                
                 muscle_chart = alt.Chart(chart_df).mark_bar(color='#5C9DF5').encode(
                     x=alt.X('部位:O', title='肌肉部位', sort='-y'),
                     y=alt.Y('累積總容量:Q', title='累積容量 (kg)'),
@@ -144,6 +182,9 @@ def render():
         else:
             st.info("尚無任何訓練數據。")
 
+    # ==========================================
+    # 視角三：🏆 1RM 成長斜率與均線預測
+    # ==========================================
     elif analysis_option == "🏆 1RM 成長斜率與均線預測":
         if st.session_state.workout_entries:
             df_all = pd.DataFrame(st.session_state.workout_entries)
@@ -193,6 +234,9 @@ def render():
         else:
             st.info("尚無任何訓練數據。")
 
+    # ==========================================
+    # 視角四：🏋️ 訓練總容量趨勢
+    # ==========================================
     elif analysis_option == "🏋️ 訓練總容量趨勢":
         if st.session_state.workout_entries:
             df_w = pd.DataFrame(st.session_state.workout_entries)
@@ -222,6 +266,9 @@ def render():
             else:
                 st.info("尚無符合篩選條件的重訓數據。")
 
+    # ==========================================
+    # 視角五：✨ 個體化黃金動作 (SFR 評分)
+    # ==========================================
     elif analysis_option == "✨ 個體化黃金動作 (SFR 評分)":
         st.markdown("#### ✨ 我的黃金 SFR 動作榜單")
         if st.session_state.workout_entries:
@@ -229,12 +276,15 @@ def render():
             if top_sfr:
                 sfr_list = [{"排名": i+1, "訓練動作": ex, "平均 SFR 效益分數": round(score, 2)} for i, (ex, score) in enumerate(top_sfr)]
                 st.table(pd.DataFrame(sfr_list).set_index("排名"))
+                st.info("💡 數據解讀：平均 SFR 分數越高，代表該動作能為你帶來最高的肌肉泵感，且關節幾乎沒有不適感。")
             else:
                 st.info("尚無足夠的 SFR 自評數據。")
         else:
             st.info("尚無任何訓練數據。")
 
-    # 🔥 新增功能一：🔄 結構推拉平衡分析 (黃金結構比)
+    # ==========================================
+    # 視角六：🔄 結構推拉平衡分析 (黃金結構比)
+    # ==========================================
     elif analysis_option == "🔄 結構推拉平衡分析 (黃金結構比)":
         st.markdown("#### 🔄 近期結構推拉動作容量平衡圖")
         st.caption("科學健美建議：為了長線力量突破與預防圓肩受傷，【水平/垂直拉】的累積總量應大於或等於【水平/垂直推】。")
@@ -253,7 +303,7 @@ def render():
                 df_pattern = pd.DataFrame(list(pattern_data.items()), columns=["動作模式", "累積訓練量(kg)"])
                 pattern_chart = alt.Chart(df_pattern).mark_bar().encode(
                     x=alt.X('累積訓練量(kg):Q', title="總容量 (kg)"),
-                    y=alt.Y('動作模式:N', sort='-x', title="模式模式"),
+                    y=alt.Y('動作模式:N', sort='-x', title="動作模式"),
                     color=alt.Color('動作模式:N', legend=None),
                     tooltip=['動作模式', alt.Tooltip('累積訓練量(kg)', format='.1f')]
                 )
@@ -263,7 +313,9 @@ def render():
         else:
             st.info("尚無訓練數據。")
 
-    # 🔥 新增功能二：📉 組間表現衰退率追蹤 (神經續航力)
+    # ==========================================
+    # 視角七：📉 組間表現衰退率追蹤 (神經續航力)
+    # ==========================================
     elif analysis_option == "📉 組間表現衰退率追蹤 (神經續航力)":
         st.markdown("#### 📉 當日單一動作「組間表現衰退」追蹤")
         st.caption("追蹤您在同一個訓練日中，隨著組數增加，神經傳導與力量輸出的衰退幅度。衰退率過快代表該重量超出了你當前的神經工作容量（Work Capacity）。")
