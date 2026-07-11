@@ -103,36 +103,28 @@ def render():
             if has_valid_data:
                 st.markdown("#### 🔥 近 7 日單部位有效組數 (Hard Sets)")
                 
-                # 🔥 UI 優化：徹底解決圖例爆炸與色彩混濁問題
+                # 🔥 極簡化視覺重構：移除多餘橫線，專注於長條圖顏色
                 sets_list = []
-                mrv_rules = []
                 for m, s in hard_sets_data.items():
                     dynamic_mrv = services.calculate_dynamic_mrv(st.session_state.workout_entries, m)
                     
-                    # 狀態標籤「固定化」，不塞入動態數字，保持圖例純淨
-                    if s < 8: status = "維持期 (不足)"
+                    if s < 8: status = "維持期 (不足 8 組)"
                     elif s <= dynamic_mrv: status = "黃金生長期 (適當)"
                     else: status = "疲勞警戒 (超量)"
                     
-                    # 把動態 MRV 的數字放進 dict，留給 Tooltip 顯示
                     sets_list.append({
                         "部位": m, 
                         "有效組數": s, 
                         "狀態": status, 
-                        "目前MRV上限": dynamic_mrv
+                        "當前MRV上限": dynamic_mrv
                     })
-                    
-                    mrv_rules.append(pd.DataFrame({'部位': [m], 'y': [dynamic_mrv], '指標': ['動態 MRV 上限']}))
-                    mrv_rules.append(pd.DataFrame({'部位': [m], 'y': [8], '指標': ['MEV 生長底線']}))
                 
                 df_sets = pd.DataFrame(sets_list)
-                df_rules = pd.concat(mrv_rules)
+                st.caption("長條圖顏色代表您的當前狀態。若您的個人 MRV 下修，柱子將會提早轉為紅色。懸浮可見詳細數值。")
                 
-                st.caption("根據您近期的 RPE 壓力表現，系統已為您自動調整個人化的 MRV 上限。滑鼠游標移至柱狀圖可查看詳細數值。")
-                
-                # 乾淨的三原色：藍(不足)、綠(適當)、紅(超量)
+                # 純淨圖例三原色
                 color_scale = alt.Scale(
-                    domain=["維持期 (不足)", "黃金生長期 (適當)", "疲勞警戒 (超量)"], 
+                    domain=["維持期 (不足 8 組)", "黃金生長期 (適當)", "疲勞警戒 (超量)"], 
                     range=["#5C9DF5", "#2e7d32", "#FF4B4B"]
                 )
                 
@@ -140,17 +132,21 @@ def render():
                     x=alt.X('部位:O', title='肌肉部位', sort='-y'),
                     y=alt.Y('有效組數:Q', title='有效組數 (組)'),
                     color=alt.Color('狀態:N', scale=color_scale, title="生長狀態"),
-                    # ✨ 秘訣：將動態數字放進 tooltip 裡
-                    tooltip=['部位', '有效組數', '狀態', alt.Tooltip('目前MRV上限', title="當前 MRV 標竿")]
+                    tooltip=['部位', '有效組數', '狀態', alt.Tooltip('當前MRV上限', title="專屬過度訓練界線")]
                 )
                 
-                # 輔助線改用高對比色：純亮紅(MRV) 與 純亮橘(MEV)
-                rule_chart = alt.Chart(df_rules).mark_tick(thickness=3, width=35).encode(
-                    x=alt.X('部位:O', sort='-y'),
-                    y='y:Q',
-                    color=alt.Color('指標:N', scale=alt.Scale(domain=['動態 MRV 上限', 'MEV 生長底線'], range=['#FF0000', '#FFA500']), title="科學輔助線")
-                )
-                st.altair_chart(sets_chart + rule_chart, use_container_width=True)
+                # 全局虛線 1：MEV 最低生長底線 (橘色)
+                rule_8 = alt.Chart(pd.DataFrame({'y': [8]})).mark_rule(
+                    color='#FFA500', strokeDash=[5, 5], strokeWidth=2
+                ).encode(y='y:Q')
+                
+                # 全局虛線 2：預設過度訓練線 (紅色)
+                rule_18 = alt.Chart(pd.DataFrame({'y': [18]})).mark_rule(
+                    color='#FF4B4B', strokeDash=[5, 5], strokeWidth=2
+                ).encode(y='y:Q')
+                
+                # 組合圖表
+                st.altair_chart(sets_chart + rule_8 + rule_18, use_container_width=True)
                 
                 st.markdown("#### 📦 歷史累積總訓練容量 (Tonnage)")
                 df_muscle = pd.DataFrame(list(muscle_vol_data.items()), columns=['部位', '累積總容量 (kg)'])
