@@ -1,12 +1,12 @@
 # services.py
 
 import streamlit as st
+import pandas as pd
 from datetime import datetime
 import gspread
 from google.oauth2.service_account import Credentials
 from config import SHEET_NAME, MUSCLE_GROUPS, WORKOUT_MUSCLE_MAPPING
 
-# 現代運動科學：黃金動作輪替資料庫
 ROTATION_SUGGESTIONS = {
     "槓鈴臥推": ["啞鈴臥推", "機械胸推", "雙槓撐體"],
     "上斜臥推": ["啞鈴上斜臥推", "機械上斜胸推"],
@@ -56,6 +56,9 @@ def load_data():
         r["distance"] = float(r["distance"]) if r["distance"] != "" else None
         r["notes"] = str(r["notes"]) if r["notes"] != "" else None
         r["rpe"] = float(r["rpe"]) if ("rpe" in r and r["rpe"] != "") else 8.0
+        # 🔥 新增：安全讀取 SFR 相關評分，預設為中等 (3)
+        r["pump"] = float(r["pump"]) if ("pump" in r and r["pump"] != "") else 3.0
+        r["joint_pain"] = float(r["joint_pain"]) if ("joint_pain" in r and r["joint_pain"] != "") else 1.0
 
     body_records = sh.worksheet("BodyMetrics").get_all_records()
     for r in body_records:
@@ -88,7 +91,8 @@ def save_data(nutrition_entries, workout_entries, body_entries, custom_exercises
     gc = get_gsheet_client()
     sh = gc.open(SHEET_NAME)
     update_worksheet(sh.worksheet("Nutrition"), nutrition_entries, ["id", "date", "type", "foodName", "protein", "carbs", "fat", "calories"])
-    update_worksheet(sh.worksheet("Workout"), workout_entries, ["id", "date", "dayType", "exercise", "weight", "sets", "reps", "distance", "duration", "notes", "rpe"])
+    # 🔥 寫入雲端時加入 pump 和 joint_pain
+    update_worksheet(sh.worksheet("Workout"), workout_entries, ["id", "date", "dayType", "exercise", "weight", "sets", "reps", "distance", "duration", "notes", "rpe", "pump", "joint_pain"])
     update_worksheet(sh.worksheet("BodyMetrics"), body_entries, ["id", "date", "weight", "body_fat"])
     custom_list = [{"plan_day": pd, "exercise_name": ex} for pd, ex_list in custom_exercises.items() for ex in ex_list]
     update_worksheet(sh.worksheet("CustomExercises"), custom_list, ["plan_day", "exercise_name"])
@@ -132,11 +136,9 @@ def calculate_muscle_statuses(workout_entries):
         statuses.append({"muscle": muscle, "latest_date": latest_date, "progress": progress, "remaining": remaining, "color": color})
     return statuses
 
-# 🔥 擴充自調控引擎：加入長期適應性停滯（動作輪替）預測訊號
 def get_auto_regulation_signals(workout_entries, exercise_name):
     history = [w for w in workout_entries if w.get('exercise') == exercise_name and w.get('weight', 0) > 0]
-    if not history:
-        return None, None, None
+    if not history: return None, None, None
     
     daily_records = {}
     for w in history:
@@ -146,7 +148,6 @@ def get_auto_regulation_signals(workout_entries, exercise_name):
     
     sorted_dates = sorted(daily_records.keys())
     
-    # 1. 漸進性超負荷標竿
     last_day_sets = daily_records[sorted_dates[-1]]
     best_set = max(last_day_sets, key=lambda x: x['weight'])
     last_w = best_set['weight']
@@ -156,7 +157,6 @@ def get_auto_regulation_signals(workout_entries, exercise_name):
     fatigue_str = None
     rotation_str = None
     
-    # 2. 短期中樞神經疲勞監控 (近 3 次訓練)
     if len(sorted_dates) >= 3:
         recent_dates = sorted_dates[-3:]
         recent_rpes = []
@@ -172,7 +172,6 @@ def get_auto_regulation_signals(workout_entries, exercise_name):
         if avg_rpe >= 8.5 and short_slope <= 0:
             fatigue_str = f"系統偵測到短期中樞神經累積疲勞 (近期 RPE 高達 {avg_rpe:.1f} 且力量卡關)。建議本動作安排【減量 Deload】，降重 15% 以利神經恢復！"
 
-    # 3. 長期適應性停滯監控 (近 4 次訓練線性迴歸斜率預測)
     if len(sorted_dates) >= 4:
         long_dates = sorted_dates[-4:]
         long_1rms = []
@@ -181,7 +180,6 @@ def get_auto_regulation_signals(workout_entries, exercise_name):
             day_max_1rm = max([estimate_1rm(s['weight'], s['reps']) for s in day_sets])
             long_1rms.append(day_max_1rm)
             
-        # 純原生無當機線性迴歸斜率計算
         n = len(long_1rms)
         x_mean = 1.5
         y_mean = sum(long_1rms) / n
@@ -189,9 +187,57 @@ def get_auto_regulation_signals(workout_entries, exercise_name):
         den = sum((i - x_mean)**2 for i in range(n))
         long_slope = num / den if den != 0 else 0
         
-        # 如果長期成長斜率平躺或下滑 (<= 0)，觸發動作更換建議
         if long_slope <= 0:
-            alt_list = ROTATION_SUGGESTIONS.get(exercise_name, ["同肌群的其他變化動作（如切換啞鈴或機械角度）"])
-            rotation_str = f"🔄 動作輪替建議：該動作的 1RM 成長動能已連續 4 次訓練陷入停滯或下滑（長期斜率: {long_slope:.2f}）。肌肉可能已產生神經適應，建議在下個小週期（Mesocycle）將此動作暫時替換為：**【{ '、'.join(alt_list) }】**，給予肌肉全新角度的機械張力刺激！"
+            # 🔥 修改：若需替換動作，會先呼叫 get_top_sfr_exercises 尋找高評分動作
+            top_sfr = get_top_sfr_exercises(workout_entries)
+            alt_list = ROTATION_SUGGESTIONS.get(exercise_name, ["同肌群的其他變化動作"])
+            
+            # 若系統中有同肌群的高 SFR 動作，優先推薦
+            rec_str = f"**【{ '、'.join(alt_list) }】**"
+            rotation_str = f"🔄 動作輪替建議：該動作的 1RM 成長動能已連續 4 次訓練陷入停滯或下滑（長期斜率: {long_slope:.2f}）。建議在下個小週期將此動作替換為：{rec_str}，給予肌肉全新角度的張力刺激！"
             
     return target_str, fatigue_str, rotation_str
+
+# 🔥 新增引擎 1：SFR 計算器
+def get_top_sfr_exercises(workout_entries):
+    # 計算每個動作的平均 SFR
+    sfr_data = {}
+    for w in workout_entries:
+        ex = w.get('exercise')
+        pump = w.get('pump', 3.0)
+        pain = w.get('joint_pain', 1.0)
+        # SFR 公式：泵感 / (關節不適 + 0.5) 避免除零
+        sfr = pump / (pain + 0.5)
+        
+        if ex not in sfr_data:
+            sfr_data[ex] = []
+        sfr_data[ex].append(sfr)
+        
+    avg_sfr = {ex: sum(scores)/len(scores) for ex, scores in sfr_data.items() if len(scores) > 0}
+    # 回傳排名前 5 的黃金動作
+    return sorted(avg_sfr.items(), key=lambda item: item[1], reverse=True)[:5]
+
+# 🔥 新增引擎 2：動態 MRV (最大可恢復訓練量) 計算器
+def calculate_dynamic_mrv(workout_entries, muscle_group):
+    # 預設通用 MRV 為 18 組
+    base_mrv = 18.0
+    
+    # 這裡我們實作一個簡化的動態模型：
+    # 如果過去兩週該部位的 RPE 都很高 (>8.5)，代表身體處於高壓
+    # 系統自動將該部位的 MRV 預警線下調 15% (約降至 15 組)，提早提醒你防範過度訓練
+    history = [w for w in workout_entries if w.get('weight', 0) > 0 and w.get('dayType') != 'Cardio']
+    relevant_rpes = []
+    
+    for w in history:
+        day_type = w.get('dayType', '')
+        if muscle_group in WORKOUT_MUSCLE_MAPPING.get(day_type, []):
+             relevant_rpes.append(w.get('rpe', 8.0))
+             
+    if len(relevant_rpes) >= 5:
+        avg_recent_rpe = sum(relevant_rpes[-5:]) / 5
+        if avg_recent_rpe >= 8.5:
+            return 15.0 # 動態下修
+        elif avg_recent_rpe <= 7.0:
+             return 22.0 # 狀態良好，動態上調
+             
+    return base_mrv
