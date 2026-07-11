@@ -8,6 +8,8 @@ import streamlit as st
 st.set_page_config(page_title="We Go GYM", page_icon="🏋️", layout="centered")
 
 import pandas as pd
+import json
+import os
 from datetime import datetime
 import uuid
 import altair as alt
@@ -23,6 +25,9 @@ if "workout_entries" not in st.session_state: st.session_state.workout_entries =
 if "body_entries" not in st.session_state: st.session_state.body_entries = []
 if "custom_exercises" not in st.session_state: st.session_state.custom_exercises = {}
 if "active_routine" not in st.session_state: st.session_state.active_routine = "4日力量與有氧 (目前)"
+
+# 🔥 新增：未同步變更標記
+if "unsynced" not in st.session_state: st.session_state.unsynced = False
 
 if "data_loaded" not in st.session_state:
     with st.spinner("🔄 正在與 Google 雲端資料庫同步中..."):
@@ -46,7 +51,51 @@ if "show_pr_balloons" in st.session_state and st.session_state.show_pr_balloons:
     st.success(st.session_state.new_pr_msg)
     st.session_state.show_pr_balloons = False
 
+# ==========================================
+# 🔥 側邊欄：系統控制與雙重備份中樞
+# ==========================================
+with st.sidebar:
+    st.header("⚙️ 系統控制中樞")
+    
+    if st.session_state.unsynced:
+        st.warning("系統有尚未同步的變更。請在離開前手動同步，以免資料遺失！", icon="⚠️")
+    else:
+        st.success("目前所有資料皆已與雲端同步。", icon="☁️")
+        
+    if st.button("🔄 手動同步至雲端", type="primary", use_container_width=True):
+        with st.spinner("正在將資料安全批次寫入 Google Sheets..."):
+            trigger_save()
+        st.session_state.unsynced = False
+        st.rerun()
+        
+    st.divider()
+    
+    st.subheader("💾 雙重備份系統")
+    st.caption("為防止雲端 API 異常，您隨時可將完整資料庫下載至本機端安全保存。")
+    
+    backup_data = {
+        "nutrition": st.session_state.nutrition_entries,
+        "workout": st.session_state.workout_entries,
+        "body_metrics": st.session_state.body_entries,
+        "custom_exercises": st.session_state.custom_exercises
+    }
+    json_backup = json.dumps(backup_data, ensure_ascii=False, indent=2)
+    st.download_button(
+        label="📥 下載完整資料庫 (JSON)",
+        data=json_backup,
+        file_name=f"WeGoGYM_Backup_{datetime.now().strftime('%Y%m%d_%H%M')}.json",
+        mime="application/json",
+        use_container_width=True
+    )
+
+# ==========================================
+# 主視圖介面
+# ==========================================
 st.title("We Go GYM ☁️")
+
+# 手機版防呆提示
+if st.session_state.unsynced:
+    st.info("💡 提示：您有尚未同步的紀錄，訓練結束後請打開左上角選單 `>` 進行雲端同步！", icon="💾")
 
 tab_nutri, tab_work, tab_body, tab_recover, tab_hist, tab_analytics = st.tabs([
     "🍃 飲食", "🏋️ 課表", "⚖️ 體重", "💪 恢復", "🕒 歷史", "📈 數據"
@@ -68,8 +117,7 @@ with tab_nutri:
             st.session_state.nutrition_entries.append({
                 "id": str(uuid.uuid4()), "date": entry_date, "type": quick_meal, "foodName": "乳清蛋白", "protein": 25.0, "carbs": 2.0, "fat": 1.5, "calories": 120.0
             })
-            with st.spinner("同步至雲端中..."): trigger_save()
-            st.success(f"已將乳清蛋白加入至 {quick_meal}！")
+            st.session_state.unsynced = True
             st.rerun()
             
     st.subheader("✍️ 手動輸入")
@@ -89,8 +137,7 @@ with tab_nutri:
             st.session_state.nutrition_entries.append({
                 "id": str(uuid.uuid4()), "date": entry_date, "type": selected_meal, "foodName": input_food_name if input_food_name else None, "protein": input_protein, "carbs": input_carbs, "fat": input_fat, "calories": input_calories
             })
-            with st.spinner("同步至雲端中..."): trigger_save()
-            st.success("已加入紀錄！")
+            st.session_state.unsynced = True
             st.rerun()
 
     st.divider()
@@ -116,7 +163,7 @@ with tab_nutri:
                 st.write(f"**{entry['calories']:.0f} kcal**")
                 if st.button("❌", key=f"del_nutri_{entry['id']}"):
                     st.session_state.nutrition_entries = [e for e in st.session_state.nutrition_entries if e["id"] != entry["id"]]
-                    with st.spinner("同步至雲端中..."): trigger_save()
+                    st.session_state.unsynced = True
                     st.rerun()
 
 # ==========================================
@@ -126,7 +173,6 @@ with tab_work:
     st.header("新增訓練動作")
     selected_date_w = st.date_input("📝 選擇紀錄日期", datetime.now().date(), key="work_date")
     
-    # 防止 APIException：使用 key 綁定
     routine_options = list(ROUTINE_PLANS.keys())
     default_index = routine_options.index(st.session_state.active_routine) if st.session_state.active_routine in routine_options else 0
     selected_routine = st.selectbox("當前執行課表", routine_options, index=default_index, key="routine_selector")
@@ -147,7 +193,7 @@ with tab_work:
             if custom_key not in st.session_state.custom_exercises: st.session_state.custom_exercises[custom_key] = []
             if new_ex not in st.session_state.custom_exercises[custom_key] and new_ex not in base_exercises:
                 st.session_state.custom_exercises[custom_key].append(new_ex)
-                with st.spinner("同步至雲端中..."): trigger_save()
+                st.session_state.unsynced = True
                 st.rerun()
 
     last_w, last_s, last_r = services.get_last_workout_data(st.session_state.workout_entries, selected_ex)
@@ -167,8 +213,7 @@ with tab_work:
                 st.session_state.workout_entries.append({
                     "id": str(uuid.uuid4()), "date": entry_date, "dayType": selected_day, "exercise": selected_ex, "distance": input_dist, "duration": input_dur, "notes": input_notes, "weight": 0.0, "sets": 0, "reps": 0, "rpe": 0.0
                 })
-                with st.spinner("同步至雲端中..."): trigger_save()
-                st.success("已加入有氧紀錄！")
+                st.session_state.unsynced = True
                 st.rerun()
         else:
             if last_s > 0: st.caption(f"💡 上次紀錄：{last_w}kg | {last_s}組 x {last_r}下")
@@ -177,7 +222,6 @@ with tab_work:
             with col2: input_sets = st.number_input("組數", min_value=0, step=1, value=int(last_s) if last_s > 0 else 4)
             with col3: input_reps = st.number_input("次數 (下)", min_value=0, step=1, value=int(last_r) if last_r > 0 else 8)
             
-            # 🔥 加入 RPE 控制
             input_rpe = st.select_slider(
                 "🎯 訓練強度 (RPE)",
                 options=[6.0, 6.5, 7.0, 7.5, 8.0, 8.5, 9.0, 9.5, 10.0],
@@ -202,7 +246,7 @@ with tab_work:
                 st.session_state.workout_entries.append({
                     "id": str(uuid.uuid4()), "date": entry_date, "dayType": selected_day, "exercise": selected_ex, "weight": input_weight, "sets": input_sets, "reps": input_reps, "duration": None, "distance": None, "notes": None, "rpe": input_rpe
                 })
-                with st.spinner("同步至雲端中..."): trigger_save()
+                st.session_state.unsynced = True
                 st.rerun()
 
     st.divider()
@@ -234,7 +278,7 @@ with tab_work:
                     with col_z:
                         if st.button("❌", key=f"del_work_{row['id']}"):
                             st.session_state.workout_entries = [e for e in st.session_state.workout_entries if e["id"] != row["id"]]
-                            with st.spinner("同步至雲端中..."): trigger_save()
+                            st.session_state.unsynced = True
                             st.rerun()
 
 # ==========================================
@@ -262,8 +306,7 @@ with tab_body:
             st.session_state.body_entries = [e for e in st.session_state.body_entries if not e["date"].startswith(target_date_str)]
             
             st.session_state.body_entries.append({"id": str(uuid.uuid4()), "date": entry_date, "weight": input_bw, "body_fat": input_bf})
-            with st.spinner("同步至雲端中..."): trigger_save()
-            st.success("身體數據已更新！")
+            st.session_state.unsynced = True
             st.rerun()
             
     st.divider()
@@ -322,7 +365,7 @@ with tab_hist:
                         with col_y:
                             if st.button("❌", key=f"del_h_n_{row['id']}"):
                                 st.session_state.nutrition_entries = [e for e in st.session_state.nutrition_entries if e["id"] != row["id"]]
-                                with st.spinner("同步至雲端中..."): trigger_save()
+                                st.session_state.unsynced = True
                                 st.rerun()
     else:
         if not st.session_state.workout_entries: st.write("尚未有任何訓練紀錄")
@@ -349,11 +392,11 @@ with tab_hist:
                             with col_y:
                                 if st.button("❌", key=f"del_h_w_{row['id']}"):
                                     st.session_state.workout_entries = [e for e in st.session_state.workout_entries if e["id"] != row["id"]]
-                                    with st.spinner("同步至雲端中..."): trigger_save()
+                                    st.session_state.unsynced = True
                                     st.rerun()
 
 # ==========================================
-# 標籤頁：📈 數據 (修正 KeyError, 保留 RPE 過濾)
+# 標籤頁：📈 數據
 # ==========================================
 with tab_analytics:
     analysis_option = st.selectbox(
@@ -483,7 +526,6 @@ with tab_analytics:
                     chart_df = pd.DataFrame({
                         "date_str": df_melted["date_str"].astype(str),
                         "指標類型": df_melted["指標類型"].astype(str),
-                        # 修正這裡的 KeyError
                         "重量 (kg)": df_melted["重量 (kg)"].astype(float)
                     })
                     
