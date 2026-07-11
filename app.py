@@ -9,7 +9,6 @@ st.set_page_config(page_title="We Go GYM", page_icon="🏋️", layout="centered
 
 import pandas as pd
 import json
-import os
 from datetime import datetime
 import uuid
 import altair as alt
@@ -25,8 +24,6 @@ if "workout_entries" not in st.session_state: st.session_state.workout_entries =
 if "body_entries" not in st.session_state: st.session_state.body_entries = []
 if "custom_exercises" not in st.session_state: st.session_state.custom_exercises = {}
 if "active_routine" not in st.session_state: st.session_state.active_routine = "4日力量與有氧 (目前)"
-
-# 🔥 新增：未同步變更標記
 if "unsynced" not in st.session_state: st.session_state.unsynced = False
 
 if "data_loaded" not in st.session_state:
@@ -52,7 +49,7 @@ if "show_pr_balloons" in st.session_state and st.session_state.show_pr_balloons:
     st.session_state.show_pr_balloons = False
 
 # ==========================================
-# 🔥 側邊欄：系統控制與雙重備份中樞
+# 側邊欄：系統控制與雙重備份中樞
 # ==========================================
 with st.sidebar:
     st.header("⚙️ 系統控制中樞")
@@ -93,7 +90,6 @@ with st.sidebar:
 # ==========================================
 st.title("We Go GYM ☁️")
 
-# 手機版防呆提示
 if st.session_state.unsynced:
     st.info("💡 提示：您有尚未同步的紀錄，訓練結束後請打開左上角選單 `>` 進行雲端同步！", icon="💾")
 
@@ -214,6 +210,7 @@ with tab_work:
                     "id": str(uuid.uuid4()), "date": entry_date, "dayType": selected_day, "exercise": selected_ex, "distance": input_dist, "duration": input_dur, "notes": input_notes, "weight": 0.0, "sets": 0, "reps": 0, "rpe": 0.0
                 })
                 st.session_state.unsynced = True
+                st.success("已加入有氧紀錄！")
                 st.rerun()
         else:
             if last_s > 0: st.caption(f"💡 上次紀錄：{last_w}kg | {last_s}組 x {last_r}下")
@@ -307,6 +304,7 @@ with tab_body:
             
             st.session_state.body_entries.append({"id": str(uuid.uuid4()), "date": entry_date, "weight": input_bw, "body_fat": input_bf})
             st.session_state.unsynced = True
+            st.success("身體數據已更新！")
             st.rerun()
             
     st.divider()
@@ -396,20 +394,20 @@ with tab_hist:
                                     st.rerun()
 
 # ==========================================
-# 標籤頁：📈 數據
+# 標籤頁：📈 數據 (🔥 深度量化升級)
 # ==========================================
 with tab_analytics:
     analysis_option = st.selectbox(
         "📊 請選擇分析圖表", 
-        ["⚖️ 體態與熱量分析", "📊 肌肉部位容量佔比", "🏆 1RM PR 榮譽榜與力量趨勢", "🏋️ 訓練總容量趨勢"]
+        ["⚖️ 體態與熱量分析 (含 7 日均線)", "📊 肌肉部位容量佔比", "🏆 1RM 成長斜率與均線預測", "🏋️ 訓練總容量趨勢"]
     )
     st.divider()
 
     only_effective = False
     if analysis_option in ["📊 肌肉部位容量佔比", "🏋️ 訓練總容量趨勢"]:
-        only_effective = st.checkbox("🎯 僅篩選高強度有效組 (RPE ≥ 8.0)", value=False, help="開啟後，圖表將自動扣除 RPE 低於 8.0 的熱身組與輕重量組")
+        only_effective = st.checkbox("🎯 僅篩選高強度有效組 (RPE ≥ 8.0)", value=False)
 
-    if analysis_option == "⚖️ 體態與熱量分析":
+    if analysis_option == "⚖️ 體態與熱量分析 (含 7 日均線)":
         st.header("⚖️ 體態與熱量分析")
         if st.session_state.nutrition_entries and st.session_state.body_entries:
             df_n = pd.DataFrame(st.session_state.nutrition_entries)
@@ -421,30 +419,48 @@ with tab_analytics:
             
             merged_df = pd.merge(daily_cal, df_b[['date_str', 'weight']], on='date_str', how='outer')
             merged_df = merged_df.sort_values('date_str')
-            merged_df['weight'] = merged_df['weight'].bfill().ffill().fillna(0)
+            merged_df['weight'] = merged_df['weight'].fillna(method='ffill').fillna(method='bfill').fillna(0)
             merged_df['calories'] = merged_df['calories'].fillna(0)
+            
+            # 🔥 新增：計算 7 日滾動平均線，平滑隨機雜訊
+            merged_df['weight_7d'] = merged_df['weight'].replace(0, pd.NA).rolling(window=7, min_periods=1).mean()
+            merged_df['cal_7d'] = merged_df['calories'].replace(0, pd.NA).rolling(window=7, min_periods=1).mean()
             
             chart_df = pd.DataFrame({
                 "date_str": merged_df["date_str"].astype(str),
-                "calories": merged_df["calories"].astype(float),
-                "weight": merged_df["weight"].astype(float)
+                "單日熱量": merged_df["calories"].astype(float),
+                "7日平均熱量": merged_df["cal_7d"].astype(float),
+                "單日體重": merged_df["weight"].astype(float),
+                "7日平均體重": merged_df["weight_7d"].astype(float)
             })
             
             st.markdown("#### 攝取熱量 (kcal)")
-            cal_chart = alt.Chart(chart_df).mark_bar(color='#5C9DF5').encode(
+            cal_bar = alt.Chart(chart_df).mark_bar(color='#5C9DF5', opacity=0.5).encode(
                 x=alt.X('date_str:O', title='日期'),
-                y=alt.Y('calories:Q', title='熱量 (kcal)'),
-                tooltip=[alt.Tooltip('date_str:O', title='日期'), alt.Tooltip('calories:Q', title='熱量 (kcal)')]
+                y=alt.Y('單日熱量:Q', title='熱量 (kcal)'),
+                tooltip=['date_str', '單日熱量']
             )
-            st.altair_chart(cal_chart, use_container_width=True)
+            cal_line = alt.Chart(chart_df).mark_line(color='#FFA500', strokeWidth=3).encode(
+                x=alt.X('date_str:O', title='日期'),
+                y=alt.Y('7日平均熱量:Q', title='熱量 (kcal)'),
+                tooltip=['date_str', alt.Tooltip('7日平均熱量', format='.0f')]
+            )
+            st.altair_chart(cal_bar + cal_line, use_container_width=True)
+            st.caption("💡 柱狀圖為單日熱量，橘線為 7 日滾動平均熱量，有助於觀察長期的熱量盈留狀態。")
             
             st.markdown("#### 體重變化 (kg)")
-            weight_chart = alt.Chart(chart_df).mark_line(color='#FF4B4B', point=True, strokeWidth=3).encode(
+            wt_point = alt.Chart(chart_df).mark_circle(color='#FF4B4B', opacity=0.4, size=60).encode(
                 x=alt.X('date_str:O', title='日期'),
-                y=alt.Y('weight:Q', title='體重 (kg)', scale=alt.Scale(zero=False)),
-                tooltip=[alt.Tooltip('date_str:O', title='日期'), alt.Tooltip('weight:Q', title='體重 (kg)')]
+                y=alt.Y('單日體重:Q', title='體重 (kg)', scale=alt.Scale(zero=False)),
+                tooltip=['date_str', '單日體重']
             )
-            st.altair_chart(weight_chart, use_container_width=True)
+            wt_line = alt.Chart(chart_df).mark_line(color='#FF4B4B', strokeWidth=3).encode(
+                x=alt.X('date_str:O', title='日期'),
+                y=alt.Y('7日平均體重:Q', title='體重 (kg)', scale=alt.Scale(zero=False)),
+                tooltip=['date_str', alt.Tooltip('7日平均體重', format='.1f')]
+            )
+            st.altair_chart(wt_point + wt_line, use_container_width=True)
+            st.caption("💡 圓點為單日秤重（受水分影響大），粗紅線為 7 日體重均線，代表真實肌肉/脂肪趨勢。")
         else:
             st.info("💡 需要同時擁有「飲食紀錄」與「體重紀錄」才能解鎖分析圖表！")
 
@@ -483,8 +499,8 @@ with tab_analytics:
         else:
             st.write("目前尚無任何訓練數據。")
 
-    elif analysis_option == "🏆 1RM PR 榮譽榜與力量趨勢":
-        st.header("🏆 個人最高紀錄 (1RM PR 榮譽榜)")
+    elif analysis_option == "🏆 1RM 成長斜率與均線預測":
+        st.header("🏆 力量成長動能分析 (EMA & 迴歸斜率)")
         if st.session_state.workout_entries:
             df_all = pd.DataFrame(st.session_state.workout_entries)
             
@@ -497,31 +513,40 @@ with tab_analytics:
             if not df_weight_only.empty:
                 df_weight_only['estimated_1rm'] = df_weight_only.apply(lambda row: services.estimate_1rm(row['weight'], row['reps']), axis=1)
                 
-                pr_summary = df_weight_only.groupby('exercise').agg(
-                    最高極限重量=('weight', 'max'),
-                    估算最大肌力_1RM=('estimated_1rm', 'max')
-                ).reset_index()
-                
-                pr_display = pr_summary.copy()
-                pr_display.rename(columns={'exercise': '訓練動作'}, inplace=True)
-                pr_display['最高極限重量'] = pr_display['最高極限重量'].apply(lambda x: f"{x:.1f} kg")
-                pr_display['估算最大肌力_1RM'] = pr_display['估算最大肌力_1RM'].apply(lambda x: f"{x:.1f} kg")
-                st.table(pr_display.set_index('訓練動作'))
-                
-                st.write("---")
-                st.subheader("📈 單一動作力量走勢與均線追蹤")
-                
                 unique_exercises = sorted(df_weight_only['exercise'].unique())
-                selected_track_ex = st.selectbox("選擇要追蹤的力量動作：", unique_exercises)
+                selected_track_ex = st.selectbox("🎯 選擇要計算成長動能的動作：", unique_exercises)
                 
                 df_track = df_weight_only[df_weight_only['exercise'] == selected_track_ex].copy()
                 df_track['date_str'] = df_track['date'].str[:10]
+                # 取每日最高 1RM 代表當日實力
                 df_daily_1rm = df_track.groupby('date_str')['estimated_1rm'].max().reset_index().sort_values('date_str')
                 
                 if not df_daily_1rm.empty:
-                    df_daily_1rm['3站移動平均線'] = df_daily_1rm['estimated_1rm'].rolling(window=3, min_periods=1).mean()
+                    # 🔥 新增 1：升級為指數平滑移動平均 (EMA)，對近期表現更敏感
+                    df_daily_1rm['EMA (短期趨勢)'] = df_daily_1rm['estimated_1rm'].ewm(span=3, adjust=False).mean()
+                    
+                    # 🔥 新增 2：純 Pandas 實作線性迴歸斜率 (防止 numpy 當機)
+                    df_daily_1rm['x_index'] = range(len(df_daily_1rm))
+                    slope = 0.0
+                    if len(df_daily_1rm) > 1:
+                        cov = df_daily_1rm['estimated_1rm'].cov(df_daily_1rm['x_index'])
+                        var = df_daily_1rm['x_index'].var()
+                        slope = cov / var if var != 0 else 0.0
+                    
+                    # 顯示動能儀表板
+                    col_m1, col_m2, col_m3 = st.columns(3)
+                    col_m1.metric(label="目前估算最高 1RM", value=f"{df_daily_1rm['estimated_1rm'].max():.1f} kg")
+                    col_m2.metric(label="近期力量底線 (EMA)", value=f"{df_daily_1rm['EMA (短期趨勢)'].iloc[-1]:.1f} kg")
+                    col_m3.metric(
+                        label="🚀 成長動能 (預測斜率)", 
+                        value=f"{slope:.2f} kg / 次", 
+                        delta="力量上升期" if slope > 0.2 else ("陷入停滯" if slope < -0.2 else "持平穩定")
+                    )
+                    
+                    st.divider()
+                    
                     df_daily_1rm.rename(columns={'estimated_1rm': '當日估算 1RM'}, inplace=True)
-                    df_melted = df_daily_1rm.melt(id_vars=['date_str'], value_vars=['當日估算 1RM', '3站移動平均線'], var_name='指標類型', value_name='重量 (kg)')
+                    df_melted = df_daily_1rm.melt(id_vars=['date_str'], value_vars=['當日估算 1RM', 'EMA (短期趨勢)'], var_name='指標類型', value_name='重量 (kg)')
                     
                     chart_df = pd.DataFrame({
                         "date_str": df_melted["date_str"].astype(str),
@@ -532,7 +557,7 @@ with tab_analytics:
                     track_chart = alt.Chart(chart_df).mark_line(point=True, strokeWidth=3).encode(
                         x=alt.X('date_str:O', title='日期'),
                         y=alt.Y('重量 (kg):Q', title='估算最大力量 (kg)', scale=alt.Scale(zero=False)),
-                        color=alt.Color('指標類型:N', scale=alt.Scale(domain=['當日估算 1RM', '3站移動平均線'], range=['#5C9DF5', '#FFA500'])),
+                        color=alt.Color('指標類型:N', scale=alt.Scale(domain=['當日估算 1RM', 'EMA (短期趨勢)'], range=['#5C9DF5', '#FFA500'])),
                         tooltip=[alt.Tooltip('date_str:O', title='日期'), alt.Tooltip('指標類型:N', title='類型'), alt.Tooltip('重量 (kg):Q', title='重量 (kg)', format='.1f')]
                     )
                     st.altair_chart(track_chart, use_container_width=True)
