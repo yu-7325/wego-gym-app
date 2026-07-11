@@ -39,7 +39,6 @@ def load_data():
         r["duration"] = float(r["duration"]) if r["duration"] != "" else None
         r["distance"] = float(r["distance"]) if r["distance"] != "" else None
         r["notes"] = str(r["notes"]) if r["notes"] != "" else None
-        # 安全讀取 rpe 欄位，賦予預設值 8.0
         r["rpe"] = float(r["rpe"]) if ("rpe" in r and r["rpe"] != "") else 8.0
 
     body_records = sh.worksheet("BodyMetrics").get_all_records()
@@ -73,7 +72,6 @@ def save_data(nutrition_entries, workout_entries, body_entries, custom_exercises
     gc = get_gsheet_client()
     sh = gc.open(SHEET_NAME)
     update_worksheet(sh.worksheet("Nutrition"), nutrition_entries, ["id", "date", "type", "foodName", "protein", "carbs", "fat", "calories"])
-    # 確保寫入時包含 rpe 欄位
     update_worksheet(sh.worksheet("Workout"), workout_entries, ["id", "date", "dayType", "exercise", "weight", "sets", "reps", "distance", "duration", "notes", "rpe"])
     update_worksheet(sh.worksheet("BodyMetrics"), body_entries, ["id", "date", "weight", "body_fat"])
     custom_list = [{"plan_day": pd, "exercise_name": ex} for pd, ex_list in custom_exercises.items() for ex in ex_list]
@@ -117,3 +115,49 @@ def calculate_muscle_statuses(workout_entries):
                 
         statuses.append({"muscle": muscle, "latest_date": latest_date, "progress": progress, "remaining": remaining, "color": color})
     return statuses
+
+# 🔥 新增：動態自調控引擎 (Auto-regulation)
+def get_auto_regulation_signals(workout_entries, exercise_name):
+    history = [w for w in workout_entries if w.get('exercise') == exercise_name and w.get('weight', 0) > 0]
+    if not history:
+        return None, None
+    
+    # 依日期群組化
+    daily_records = {}
+    for w in history:
+        d = w['date'][:10]
+        if d not in daily_records:
+            daily_records[d] = []
+        daily_records[d].append(w)
+    
+    sorted_dates = sorted(daily_records.keys())
+    
+    # 1. 漸進性超負荷標竿計算 (Progressive Overload Target)
+    last_day_sets = daily_records[sorted_dates[-1]]
+    best_set = max(last_day_sets, key=lambda x: x['weight'])
+    last_w = best_set['weight']
+    last_r = best_set['reps']
+    
+    target_str = f"🎯 今日超負荷標竿：維持 **{last_w:.1f}kg 推 {int(last_r) + 1} 下**，或加重至 **{last_w + 2.5:.1f}kg**"
+    
+    # 2. 疲勞監控與減量訊號 (Fatigue & Deload Signal)
+    fatigue_str = None
+    if len(sorted_dates) >= 3:
+        recent_dates = sorted_dates[-3:]
+        recent_rpes = []
+        recent_1rms = []
+        
+        for d in recent_dates:
+            day_sets = daily_records[d]
+            recent_rpes.extend([s.get('rpe', 8.0) for s in day_sets])
+            day_max_1rm = max([estimate_1rm(s['weight'], s['reps']) for s in day_sets])
+            recent_1rms.append(day_max_1rm)
+            
+        avg_rpe = sum(recent_rpes) / len(recent_rpes) if recent_rpes else 0
+        slope = recent_1rms[-1] - recent_1rms[0]
+        
+        # 條件：近 3 次訓練平均 RPE 飆高，且力量陷入停滯或衰退
+        if avg_rpe >= 8.5 and slope <= 0:
+            fatigue_str = f"系統偵測到中樞神經累積疲勞 (近期 RPE 高達 {avg_rpe:.1f} 且力量卡關)。建議本動作安排【減量 Deload】，降重 15% 以利恢復！"
+            
+    return target_str, fatigue_str
