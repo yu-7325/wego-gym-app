@@ -4,6 +4,7 @@ import streamlit as st
 import pandas as pd
 import altair as alt
 from datetime import datetime
+from collections import defaultdict  # 🔥 就是漏了這一行！補上啦！
 from config import MUSCLE_GROUPS, WORKOUT_MUSCLE_MAPPING
 import services
 
