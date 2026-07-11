@@ -192,6 +192,14 @@ with tab_work:
                 st.session_state.unsynced = True
                 st.rerun()
 
+    # 🔥 結合 Auto-regulation (疲勞警告優先於超負荷標竿)
+    if selected_ex != "➕ 新增動作...":
+        target_msg, fatigue_msg = services.get_auto_regulation_signals(st.session_state.workout_entries, selected_ex)
+        if fatigue_msg:
+            st.error(fatigue_msg, icon="🚨")
+        elif target_msg:
+            st.info(target_msg, icon="📈")
+
     last_w, last_s, last_r = services.get_last_workout_data(st.session_state.workout_entries, selected_ex)
 
     with st.form("workout_form", clear_on_submit=False):
@@ -394,7 +402,7 @@ with tab_hist:
                                     st.rerun()
 
 # ==========================================
-# 標籤頁：📈 數據 (🔥 強制型態安全鎖定)
+# 9. 數據分析
 # ==========================================
 with tab_analytics:
     analysis_option = st.selectbox(
@@ -420,7 +428,6 @@ with tab_analytics:
             merged_df = pd.merge(daily_cal, df_b[['date_str', 'weight']], on='date_str', how='outer')
             merged_df = merged_df.sort_values('date_str')
             
-            # 🔥 關鍵修復：強制轉為浮點數，再做 rolling
             merged_df['weight'] = pd.to_numeric(merged_df['weight'], errors='coerce').bfill().ffill().fillna(0.0)
             merged_df['calories'] = pd.to_numeric(merged_df['calories'], errors='coerce').fillna(0.0)
             
@@ -522,7 +529,6 @@ with tab_analytics:
                 df_daily_1rm = df_track.groupby('date_str')['estimated_1rm'].max().reset_index().sort_values('date_str')
                 
                 if not df_daily_1rm.empty:
-                    # 強制轉為數值型態防止 ewm 當機
                     df_daily_1rm['estimated_1rm'] = pd.to_numeric(df_daily_1rm['estimated_1rm'], errors='coerce')
                     df_daily_1rm['EMA (短期趨勢)'] = df_daily_1rm['estimated_1rm'].ewm(span=3, adjust=False).mean()
                     
