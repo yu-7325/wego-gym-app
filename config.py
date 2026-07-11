@@ -17,14 +17,10 @@ WORKOUT_MUSCLE_MAPPING = {
 }
 
 MUSCLE_GROUPS = {
-    "Chest": {"recovery_hours": 48}, 
-    "Back": {"recovery_hours": 72},
-    "Legs": {"recovery_hours": 72}, 
-    "Abs": {"recovery_hours": 24},
-    "Biceps": {"recovery_hours": 24}, 
-    "Shoulders": {"recovery_hours": 48},
-    "Triceps": {"recovery_hours": 48}, 
-    "Forearms": {"recovery_hours": 24}
+    "Chest": {"recovery_hours": 48}, "Back": {"recovery_hours": 72},
+    "Legs": {"recovery_hours": 72}, "Abs": {"recovery_hours": 24},
+    "Biceps": {"recovery_hours": 24}, "Shoulders": {"recovery_hours": 48},
+    "Triceps": {"recovery_hours": 48}, "Forearms": {"recovery_hours": 24}
 }
 
 ROUTINE_PLANS = {
