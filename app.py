@@ -9,11 +9,13 @@ import gspread
 from google.oauth2.service_account import Credentials
 from collections import defaultdict
 
-# 🔥 關鍵修復：網頁設定必須是第一個執行的 Streamlit 指令！
+# ==========================================
+# 1. 網頁初始設定 (必須在最上方)
+# ==========================================
 st.set_page_config(page_title="We Go GYM", page_icon="🏋️", layout="centered")
 
 # ==========================================
-# 1. 常數與多維度課表設定
+# 2. 常數與多維度課表設定
 # ==========================================
 MEAL_TYPES = ["早餐", "午餐", "練前餐", "練後餐", "晚餐", "宵夜"]
 SHEET_NAME = "WeGoGYM_Database"
@@ -64,7 +66,7 @@ ROUTINE_PLANS = {
 }
 
 # ==========================================
-# 2. 雲端資料庫串接與狀態初始化
+# 3. 雲端資料庫串接與狀態初始化
 # ==========================================
 @st.cache_resource
 def get_gsheet_client():
@@ -491,7 +493,7 @@ with tab_hist:
                                     st.rerun()
 
 # ==========================================
-# 9. 數據分析 
+# 9. 數據分析 (🔥 解除寬度封印，完美滿版呈現)
 # ==========================================
 with tab_analytics:
     analysis_option = st.selectbox(
@@ -526,16 +528,17 @@ with tab_analytics:
                 x=alt.X('date_str:O', title='日期'),
                 y=alt.Y('calories:Q', title='熱量 (kcal)'),
                 tooltip=[alt.Tooltip('date_str:O', title='日期'), alt.Tooltip('calories:Q', title='熱量 (kcal)')]
-            ).properties(width=alt.Step(60))
-            st.altair_chart(cal_chart)
+            )
+            # 加上 use_container_width=True 讓圖表自動完美滿版
+            st.altair_chart(cal_chart, use_container_width=True)
             
             st.markdown("#### 體重變化 (kg)")
             weight_chart = alt.Chart(chart_df).mark_line(color='#FF4B4B', point=True, strokeWidth=3).encode(
                 x=alt.X('date_str:O', title='日期'),
                 y=alt.Y('weight:Q', title='體重 (kg)', scale=alt.Scale(zero=False)),
                 tooltip=[alt.Tooltip('date_str:O', title='日期'), alt.Tooltip('weight:Q', title='體重 (kg)')]
-            ).properties(width=alt.Step(60))
-            st.altair_chart(weight_chart)
+            )
+            st.altair_chart(weight_chart, use_container_width=True)
         else:
             st.info("💡 需要同時擁有「飲食紀錄」與「體重紀錄」才能解鎖分析圖表！")
 
@@ -565,8 +568,8 @@ with tab_analytics:
                     x=alt.X('部位:O', title='肌肉部位', sort='-y'),
                     y=alt.Y('累積總容量:Q', title='累積總容量 (kg)'),
                     tooltip=[alt.Tooltip('部位:O', title='部位'), alt.Tooltip('累積總容量:Q', title='總容量 (kg)', format='.1f')]
-                ).properties(width=alt.Step(60))
-                st.altair_chart(muscle_chart)
+                )
+                st.altair_chart(muscle_chart, use_container_width=True)
             else:
                 st.write("目前尚無重量訓練數據可供分析。")
         else:
@@ -623,8 +626,8 @@ with tab_analytics:
                         y=alt.Y('重量:Q', title='估算最大力量 (kg)', scale=alt.Scale(zero=False)),
                         color=alt.Color('指標類型:N', scale=alt.Scale(domain=['當日估算 1RM', '3站移動平均線'], range=['#5C9DF5', '#FFA500'])),
                         tooltip=[alt.Tooltip('date_str:O', title='日期'), alt.Tooltip('指標類型:N', title='類型'), alt.Tooltip('重量:Q', title='重量 (kg)', format='.1f')]
-                    ).properties(width=alt.Step(60))
-                    st.altair_chart(track_chart)
+                    )
+                    st.altair_chart(track_chart, use_container_width=True)
             else:
                 st.write("目前尚無重量訓練數據，快去建立第一筆 PR 吧！")
         else:
@@ -666,7 +669,7 @@ with tab_analytics:
                     x=alt.X('period:O', title=x_title, sort=None),
                     y=alt.Y('volume:Q', title='總容量 (kg)'),
                     tooltip=[alt.Tooltip('period:O', title=x_title), alt.Tooltip('volume:Q', title='總容量 (kg)', format='.1f')]
-                ).properties(width=alt.Step(60))
-                st.altair_chart(vol_chart)
+                )
+                st.altair_chart(vol_chart, use_container_width=True)
             else:
                 st.write("目前尚無重量訓練數據可供分析。")
