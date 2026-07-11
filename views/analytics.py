@@ -1,3 +1,5 @@
+# views/analytics.py
+
 import streamlit as st
 import pandas as pd
 import altair as alt
@@ -8,7 +10,7 @@ import services
 def render():
     analysis_option = st.selectbox(
         "📊 請選擇分析圖表", 
-        ["⚖️ 體態與熱量分析 (含 7 日均線)", "📊 肌肉部位容量與有效組數 (肌肥大指標)", "🏆 1RM 成長斜率與均線預測", "🏋️ 訓練總容量趨勢"]
+        ["⚖️ 體態與熱量分析 (含 7 日均線)", "📊 肌肉部位容量與有效組數 (肌肥大指標)", "🏆 1RM 成長斜率與均線預測", "🏋️ 訓練總容量趨勢", "✨ 個體化黃金動作 (SFR 評分)"]
     )
     st.divider()
 
@@ -101,26 +103,44 @@ def render():
             
             if has_valid_data:
                 st.subheader("🔥 近 7 日單部位有效組數 (Hard Sets)")
-                st.caption("肌肥大黃金區間：8~18組。超過 18 組可能進入垃圾容量並導致過度訓練。")
                 
+                # 🔥 動態 MRV 計算與視覺化
                 sets_list = []
+                mrv_rules = []
                 for m, s in hard_sets_data.items():
-                    status = "維持期 (<8組)" if s < 8 else ("黃金生長期 (8-18組)" if s <= 18 else "疲勞警戒 (>18組)")
+                    # 取出該部位專屬的動態 MRV
+                    dynamic_mrv = services.calculate_dynamic_mrv(st.session_state.workout_entries, m)
+                    
+                    status = "維持期 (<8組)" if s < 8 else (f"黃金生長期 (8-{int(dynamic_mrv)}組)" if s <= dynamic_mrv else f"疲勞警戒 (>{int(dynamic_mrv)}組)")
                     sets_list.append({"部位": m, "有效組數": s, "狀態": status})
+                    
+                    # 替該部位標註 MRV (紅色) 與 MEV (橘色 8組)
+                    mrv_rules.append(pd.DataFrame({'部位': [m], 'y': [dynamic_mrv], 'type': ['個人動態 MRV (最大可恢復量)']}))
+                    mrv_rules.append(pd.DataFrame({'部位': [m], 'y': [8], 'type': ['MEV (維持底線)']}))
                 
                 df_sets = pd.DataFrame(sets_list)
-                color_scale = alt.Scale(domain=["維持期 (<8組)", "黃金生長期 (8-18組)", "疲勞警戒 (>18組)"], range=["#5C9DF5", "#2e7d32", "#FF4B4B"])
+                df_rules = pd.concat(mrv_rules)
                 
-                sets_chart = alt.Chart(df_sets).mark_bar().encode(
+                st.caption("根據您近期的 RPE 壓力表現，系統已為您自動調整個人化的 MRV 上限。")
+                
+                color_scale = alt.Scale(domain=["維持期 (<8組)", "黃金生長期 (8-18組)", "黃金生長期 (8-15組)", "黃金生長期 (8-22組)", "疲勞警戒 (>18組)", "疲勞警戒 (>15組)", "疲勞警戒 (>22組)"], 
+                                        range=["#5C9DF5", "#2e7d32", "#2e7d32", "#2e7d32", "#FF4B4B", "#FF4B4B", "#FF4B4B"])
+                
+                sets_chart = alt.Chart(df_sets).mark_bar(opacity=0.8).encode(
                     x=alt.X('部位:O', title='肌肉部位', sort='-y'),
                     y=alt.Y('有效組數:Q', title='近 7 日有效組數'),
                     color=alt.Color('狀態:N', scale=color_scale),
                     tooltip=['部位', '有效組數', '狀態']
                 )
                 
-                rule_18 = alt.Chart(pd.DataFrame({'y': [18]})).mark_rule(color='red', strokeDash=[5,5]).encode(y='y:Q')
-                rule_8 = alt.Chart(pd.DataFrame({'y': [8]})).mark_rule(color='orange', strokeDash=[5,5]).encode(y='y:Q')
-                st.altair_chart(sets_chart + rule_18 + rule_8, use_container_width=True)
+                # 使用 mark_tick 在每個柱子上方畫出專屬的紅/橘色輔助橫線
+                rule_chart = alt.Chart(df_rules).mark_tick(thickness=3, width=40).encode(
+                    x=alt.X('部位:O', sort='-y'),
+                    y='y:Q',
+                    color=alt.Color('type:N', scale=alt.Scale(domain=['個人動態 MRV (最大可恢復量)', 'MEV (維持底線)'], range=['red', 'orange']))
+                )
+                
+                st.altair_chart(sets_chart + rule_chart, use_container_width=True)
                 
                 st.divider()
                 st.subheader("📦 歷史累積總容量 (Tonnage)")
@@ -219,3 +239,20 @@ def render():
                 st.altair_chart(vol_chart, use_container_width=True)
             else:
                 st.write("目前尚無符合篩選條件的重量訓練數據。")
+
+    # 🔥 新增：黃金 SFR 動作榜單
+    elif analysis_option == "✨ 個體化黃金動作 (SFR 評分)":
+        st.header("✨ 我的黃金 SFR 動作榜單")
+        st.caption("刺激與疲勞比 (Stimulus-to-Fatigue Ratio) 是衡量一個動作對『你個人』肌肥大效益的最佳指標。分數越高，代表這個動作越能給你帶來目標肌肉充血，且對關節的壓力越小。")
+        
+        if st.session_state.workout_entries:
+            top_sfr = services.get_top_sfr_exercises(st.session_state.workout_entries)
+            if top_sfr:
+                sfr_list = [{"排名": i+1, "訓練動作": ex, "平均 SFR 分數": round(score, 2)} for i, (ex, score) in enumerate(top_sfr)]
+                st.table(pd.DataFrame(sfr_list).set_index("排名"))
+                
+                st.info("💡 系統排課建議：當主動作（例如：槓鈴臥推）遇到力量停滯或關節不適時，優先從上方榜單挑選同部位的高分動作來替換，可大幅提升生長效率！")
+            else:
+                st.write("目前尚無足夠的 SFR 自評數據。請在記錄重訓時展開『📝 動作效能自評』滑桿來收集數據！")
+        else:
+            st.write("目前尚無任何訓練數據。")
