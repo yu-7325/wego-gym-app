@@ -22,6 +22,34 @@ ROTATION_SUGGESTIONS = {
     "繩索下拉": ["碎顱式 (Skull Crusher)", "雙槓撐體", "啞鈴頭後三頭伸展"]
 }
 
+# 🔥 新增：硬核重訓模式模式分類資料庫 (推拉結構平衡必備)
+MOVEMENT_PATTERNS = {
+    "槓鈴臥推": "水平推 (Horizontal Push)", "機械胸推": "水平推 (Horizontal Push)", 
+    "上斜臥推": "水平推 (Horizontal Push)", "機械夾胸": "水平推 (Horizontal Push)",
+    "肩推": "垂直推 (Vertical Push)", "側平舉&飛鳥": "垂直推 (Vertical Push)", 
+    "側平舉": "垂直推 (Vertical Push)", "反式飛鳥": "水平拉 (Horizontal Pull)",
+    "引體向上": "垂直拉 (Vertical Pull)", "機械上背": "水平拉 (Horizontal Pull)", 
+    "機械下背": "水平拉 (Horizontal Pull)", "機械下拉": "垂直拉 (Vertical Pull)",
+    "直臂下拉": "垂直拉 (Vertical Pull)", "繩索面拉": "水平拉 (Horizontal Pull)", 
+    "單臂亞鈴划船": "水平拉 (Horizontal Pull)", "滑輪下拉": "垂直拉 (Vertical Pull)",
+    "機械寬距下拉": "垂直拉 (Vertical Pull)", "啞鈴划船": "水平拉 (Horizontal Pull)", 
+    "雙槓撐體": "水平推 (Horizontal Push)", "機械上斜胸推": "水平推 (Horizontal Push)",
+    "啞鈴臥推": "水平推 (Horizontal Push)", "啞鈴上斜臥推": "水平推 (Horizontal Push)", 
+    "啞鈴飛鳥": "水平推 (Horizontal Push)", "機械肩推": "垂直推 (Vertical Push)",
+    "啞鈴肩推": "垂直推 (Vertical Push)",
+    "深蹲": "膝主導 (Squat/Quad)", "腿推機": "膝主導 (Squat/Quad)", 
+    "保加利亞": "膝主導 (Squat/Quad)", "保加利亞單腿蹲": "膝主導 (Squat/Quad)",
+    "坐姿腿伸展": "膝主導 (Squat/Quad)", "負重提踵": "下肢其餘",
+    "RDL": "髖主導 (Hinge/Hams)", "北歐彎舉": "髖主導 (Hinge/Hams)", 
+    "六角槓硬舉": "髖主導 (Hinge/Hams)", "傳統硬舉": "髖主導 (Hinge/Hams)",
+    "俯臥腿彎舉": "髖主導 (Hinge/Hams)", "壺鈴swing": "髖主導 (Hinge/Hams)", 
+    "壺鈴Swing": "髖主導 (Hinge/Hams)", "藥球下砸": "核心(Abs)", "機械卷腹": "核心(Abs)",
+    "Clean": "全身爆發力", "Snatch": "全身爆發力", "抓舉 (Snatch)": "全身爆發力",
+    "二頭彎舉": "手臂孤立", "繩索下拉": "手臂孤立", "壺鈴三頭": "手臂孤立", 
+    "牧師凳彎舉": "手臂孤立", "式彎舉": "手臂孤立", "上斜啞鈴彎舉": "手臂孤立", 
+    "碎顱式": "手臂孤立", "碎顱式 (Skull Crusher)": "手臂孤立", "啞鈴頭後三頭伸展": "手臂孤立"
+}
+
 @st.cache_resource
 def get_gsheet_client():
     creds = Credentials.from_service_account_info(
@@ -42,7 +70,7 @@ def load_data():
     try:
         sh = gc.open(SHEET_NAME)
     except gspread.exceptions.SpreadsheetNotFound:
-        st.error(f"找不到名為 '{SHEET_NAME}' 的試算表。請確認金鑰權限設定正確！")
+        st.error(f"找不到名為 '{SHEET_NAME}' 的試算表。")
         st.stop()
         
     ensure_worksheets(sh)
@@ -56,7 +84,6 @@ def load_data():
         r["distance"] = float(r["distance"]) if r["distance"] != "" else None
         r["notes"] = str(r["notes"]) if r["notes"] != "" else None
         r["rpe"] = float(r["rpe"]) if ("rpe" in r and r["rpe"] != "") else 8.0
-        # 🔥 新增：安全讀取 SFR 相關評分，預設為中等 (3)
         r["pump"] = float(r["pump"]) if ("pump" in r and r["pump"] != "") else 3.0
         r["joint_pain"] = float(r["joint_pain"]) if ("joint_pain" in r and r["joint_pain"] != "") else 1.0
 
@@ -87,15 +114,20 @@ def update_worksheet(ws, data_list, default_headers):
         rows.append(row)
     ws.update([headers] + rows)
 
+# 🔥 更新：地下室離線防護機制 (雲端防當機核心)
 def save_data(nutrition_entries, workout_entries, body_entries, custom_exercises):
-    gc = get_gsheet_client()
-    sh = gc.open(SHEET_NAME)
-    update_worksheet(sh.worksheet("Nutrition"), nutrition_entries, ["id", "date", "type", "foodName", "protein", "carbs", "fat", "calories"])
-    # 🔥 寫入雲端時加入 pump 和 joint_pain
-    update_worksheet(sh.worksheet("Workout"), workout_entries, ["id", "date", "dayType", "exercise", "weight", "sets", "reps", "distance", "duration", "notes", "rpe", "pump", "joint_pain"])
-    update_worksheet(sh.worksheet("BodyMetrics"), body_entries, ["id", "date", "weight", "body_fat"])
-    custom_list = [{"plan_day": pd, "exercise_name": ex} for pd, ex_list in custom_exercises.items() for ex in ex_list]
-    update_worksheet(sh.worksheet("CustomExercises"), custom_list, ["plan_day", "exercise_name"])
+    try:
+        gc = get_gsheet_client()
+        sh = gc.open(SHEET_NAME)
+        update_worksheet(sh.worksheet("Nutrition"), nutrition_entries, ["id", "date", "type", "foodName", "protein", "carbs", "fat", "calories"])
+        update_worksheet(sh.worksheet("Workout"), workout_entries, ["id", "date", "dayType", "exercise", "weight", "sets", "reps", "distance", "duration", "notes", "rpe", "pump", "joint_pain"])
+        update_worksheet(sh.worksheet("BodyMetrics"), body_entries, ["id", "date", "weight", "body_fat"])
+        custom_list = [{"plan_day": pd, "exercise_name": ex} for pd, ex_list in custom_exercises.items() for ex in ex_list]
+        update_worksheet(sh.worksheet("CustomExercises"), custom_list, ["plan_day", "exercise_name"])
+        return True # 順利寫入雲端
+    except Exception as e:
+        # 🛡️ 觸發斷網防護：在記憶體中安全保留，不噴出紅色報錯畫面，回傳 False 讓前端提示
+        return False
 
 def get_last_workout_data(workout_entries, exercise_name):
     sorted_workouts = sorted(workout_entries, key=lambda x: x["date"], reverse=True) if workout_entries else []
@@ -188,56 +220,34 @@ def get_auto_regulation_signals(workout_entries, exercise_name):
         long_slope = num / den if den != 0 else 0
         
         if long_slope <= 0:
-            # 🔥 修改：若需替換動作，會先呼叫 get_top_sfr_exercises 尋找高評分動作
-            top_sfr = get_top_sfr_exercises(workout_entries)
             alt_list = ROTATION_SUGGESTIONS.get(exercise_name, ["同肌群的其他變化動作"])
-            
-            # 若系統中有同肌群的高 SFR 動作，優先推薦
-            rec_str = f"**【{ '、'.join(alt_list) }】**"
-            rotation_str = f"🔄 動作輪替建議：該動作的 1RM 成長動能已連續 4 次訓練陷入停滯或下滑（長期斜率: {long_slope:.2f}）。建議在下個小週期將此動作替換為：{rec_str}，給予肌肉全新角度的張力刺激！"
+            rotation_str = f"🔄 動作輪替建議：該動作的 1RM 成長動能已連續 4 次訓練陷入停滯（長期斜率: {long_slope:.2f}）。建議將此動作暫時替換為：**【{ '、'.join(alt_list) }】**！"
             
     return target_str, fatigue_str, rotation_str
 
-# 🔥 新增引擎 1：SFR 計算器
 def get_top_sfr_exercises(workout_entries):
-    # 計算每個動作的平均 SFR
     sfr_data = {}
     for w in workout_entries:
         ex = w.get('exercise')
+        if not ex or w.get('dayType') == 'Cardio': continue
         pump = w.get('pump', 3.0)
         pain = w.get('joint_pain', 1.0)
-        # SFR 公式：泵感 / (關節不適 + 0.5) 避免除零
         sfr = pump / (pain + 0.5)
-        
-        if ex not in sfr_data:
-            sfr_data[ex] = []
+        if ex not in sfr_data: sfr_data[ex] = []
         sfr_data[ex].append(sfr)
-        
     avg_sfr = {ex: sum(scores)/len(scores) for ex, scores in sfr_data.items() if len(scores) > 0}
-    # 回傳排名前 5 的黃金動作
     return sorted(avg_sfr.items(), key=lambda item: item[1], reverse=True)[:5]
 
-# 🔥 新增引擎 2：動態 MRV (最大可恢復訓練量) 計算器
 def calculate_dynamic_mrv(workout_entries, muscle_group):
-    # 預設通用 MRV 為 18 組
     base_mrv = 18.0
-    
-    # 這裡我們實作一個簡化的動態模型：
-    # 如果過去兩週該部位的 RPE 都很高 (>8.5)，代表身體處於高壓
-    # 系統自動將該部位的 MRV 預警線下調 15% (約降至 15 組)，提早提醒你防範過度訓練
     history = [w for w in workout_entries if w.get('weight', 0) > 0 and w.get('dayType') != 'Cardio']
     relevant_rpes = []
-    
     for w in history:
         day_type = w.get('dayType', '')
         if muscle_group in WORKOUT_MUSCLE_MAPPING.get(day_type, []):
              relevant_rpes.append(w.get('rpe', 8.0))
-             
     if len(relevant_rpes) >= 5:
         avg_recent_rpe = sum(relevant_rpes[-5:]) / 5
-        if avg_recent_rpe >= 8.5:
-            return 15.0 # 動態下修
-        elif avg_recent_rpe <= 7.0:
-             return 22.0 # 狀態良好，動態上調
-             
+        if avg_recent_rpe >= 8.5: return 15.0
+        elif avg_recent_rpe <= 7.0: return 22.0
     return base_mrv
