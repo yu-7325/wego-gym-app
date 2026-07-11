@@ -6,6 +6,22 @@ import gspread
 from google.oauth2.service_account import Credentials
 from config import SHEET_NAME, MUSCLE_GROUPS, WORKOUT_MUSCLE_MAPPING
 
+# 現代運動科學：黃金動作輪替資料庫
+ROTATION_SUGGESTIONS = {
+    "槓鈴臥推": ["啞鈴臥推", "機械胸推", "雙槓撐體"],
+    "上斜臥推": ["啞鈴上斜臥推", "機械上斜胸推"],
+    "機械胸推": ["槓鈴臥推", "啞鈴飛鳥"],
+    "肩推": ["啞鈴肩推", "機械肩推", "側平舉"],
+    "引體向上": ["滑輪下拉", "機械寬距下拉", "啞鈴划船"],
+    "深蹲": ["腿推機", "保加利亞單腿蹲", "六角槓硬舉"],
+    "腿推機": ["深蹲", "保加利亞單腿蹲", "坐姿腿伸展"],
+    "RDL": ["六角槓硬舉", "俯臥腿彎舉", "傳統硬舉"],
+    "六角槓硬舉": ["RDL", "傳統硬舉", "深蹲"],
+    "Clean": ["六角槓硬舉", "壺鈴Swing", "抓舉 (Snatch)"],
+    "二頭彎舉": ["牧師凳彎舉", "搥式彎舉", "上斜啞鈴彎舉"],
+    "繩索下拉": ["碎顱式 (Skull Crusher)", "雙槓撐體", "啞鈴頭後三頭伸展"]
+}
+
 @st.cache_resource
 def get_gsheet_client():
     creds = Credentials.from_service_account_info(
@@ -116,37 +132,35 @@ def calculate_muscle_statuses(workout_entries):
         statuses.append({"muscle": muscle, "latest_date": latest_date, "progress": progress, "remaining": remaining, "color": color})
     return statuses
 
-# 🔥 新增：動態自調控引擎 (Auto-regulation)
+# 🔥 擴充自調控引擎：加入長期適應性停滯（動作輪替）預測訊號
 def get_auto_regulation_signals(workout_entries, exercise_name):
     history = [w for w in workout_entries if w.get('exercise') == exercise_name and w.get('weight', 0) > 0]
     if not history:
-        return None, None
+        return None, None, None
     
-    # 依日期群組化
     daily_records = {}
     for w in history:
         d = w['date'][:10]
-        if d not in daily_records:
-            daily_records[d] = []
+        if d not in daily_records: daily_records[d] = []
         daily_records[d].append(w)
     
     sorted_dates = sorted(daily_records.keys())
     
-    # 1. 漸進性超負荷標竿計算 (Progressive Overload Target)
+    # 1. 漸進性超負荷標竿
     last_day_sets = daily_records[sorted_dates[-1]]
     best_set = max(last_day_sets, key=lambda x: x['weight'])
     last_w = best_set['weight']
     last_r = best_set['reps']
-    
     target_str = f"🎯 今日超負荷標竿：維持 **{last_w:.1f}kg 推 {int(last_r) + 1} 下**，或加重至 **{last_w + 2.5:.1f}kg**"
     
-    # 2. 疲勞監控與減量訊號 (Fatigue & Deload Signal)
     fatigue_str = None
+    rotation_str = None
+    
+    # 2. 短期中樞神經疲勞監控 (近 3 次訓練)
     if len(sorted_dates) >= 3:
         recent_dates = sorted_dates[-3:]
         recent_rpes = []
         recent_1rms = []
-        
         for d in recent_dates:
             day_sets = daily_records[d]
             recent_rpes.extend([s.get('rpe', 8.0) for s in day_sets])
@@ -154,10 +168,30 @@ def get_auto_regulation_signals(workout_entries, exercise_name):
             recent_1rms.append(day_max_1rm)
             
         avg_rpe = sum(recent_rpes) / len(recent_rpes) if recent_rpes else 0
-        slope = recent_1rms[-1] - recent_1rms[0]
-        
-        # 條件：近 3 次訓練平均 RPE 飆高，且力量陷入停滯或衰退
-        if avg_rpe >= 8.5 and slope <= 0:
-            fatigue_str = f"系統偵測到中樞神經累積疲勞 (近期 RPE 高達 {avg_rpe:.1f} 且力量卡關)。建議本動作安排【減量 Deload】，降重 15% 以利恢復！"
+        short_slope = recent_1rms[-1] - recent_1rms[0]
+        if avg_rpe >= 8.5 and short_slope <= 0:
+            fatigue_str = f"系統偵測到短期中樞神經累積疲勞 (近期 RPE 高達 {avg_rpe:.1f} 且力量卡關)。建議本動作安排【減量 Deload】，降重 15% 以利神經恢復！"
+
+    # 3. 長期適應性停滯監控 (近 4 次訓練線性迴歸斜率預測)
+    if len(sorted_dates) >= 4:
+        long_dates = sorted_dates[-4:]
+        long_1rms = []
+        for d in long_dates:
+            day_sets = daily_records[d]
+            day_max_1rm = max([estimate_1rm(s['weight'], s['reps']) for s in day_sets])
+            long_1rms.append(day_max_1rm)
             
-    return target_str, fatigue_str
+        # 純原生無當機線性迴歸斜率計算
+        n = len(long_1rms)
+        x_mean = 1.5
+        y_mean = sum(long_1rms) / n
+        num = sum((i - x_mean) * (long_1rms[i] - y_mean) for i in range(n))
+        den = sum((i - x_mean)**2 for i in range(n))
+        long_slope = num / den if den != 0 else 0
+        
+        # 如果長期成長斜率平躺或下滑 (<= 0)，觸發動作更換建議
+        if long_slope <= 0:
+            alt_list = ROTATION_SUGGESTIONS.get(exercise_name, ["同肌群的其他變化動作（如切換啞鈴或機械角度）"])
+            rotation_str = f"🔄 動作輪替建議：該動作的 1RM 成長動能已連續 4 次訓練陷入停滯或下滑（長期斜率: {long_slope:.2f}）。肌肉可能已產生神經適應，建議在下個小週期（Mesocycle）將此動作暫時替換為：**【{ '、'.join(alt_list) }】**，給予肌肉全新角度的機械張力刺激！"
+            
+    return target_str, fatigue_str, rotation_str
