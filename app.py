@@ -192,7 +192,7 @@ with tab_work:
                 st.session_state.unsynced = True
                 st.rerun()
 
-    # 🔥 結合 Auto-regulation (疲勞警告優先於超負荷標竿)
+    # 結合 Auto-regulation (疲勞警告優先於超負荷標竿)
     if selected_ex != "➕ 新增動作...":
         target_msg, fatigue_msg = services.get_auto_regulation_signals(st.session_state.workout_entries, selected_ex)
         if fatigue_msg:
@@ -402,18 +402,19 @@ with tab_hist:
                                     st.rerun()
 
 # ==========================================
-# 9. 數據分析
+# 標籤頁：📈 數據 (🔥 升級肌肥大指標)
 # ==========================================
 with tab_analytics:
+    # 🔥 更新下拉選單名稱
     analysis_option = st.selectbox(
         "📊 請選擇分析圖表", 
-        ["⚖️ 體態與熱量分析 (含 7 日均線)", "📊 肌肉部位容量佔比", "🏆 1RM 成長斜率與均線預測", "🏋️ 訓練總容量趨勢"]
+        ["⚖️ 體態與熱量分析 (含 7 日均線)", "📊 肌肉部位容量與有效組數 (肌肥大指標)", "🏆 1RM 成長斜率與均線預測", "🏋️ 訓練總容量趨勢"]
     )
     st.divider()
 
     only_effective = False
-    if analysis_option in ["📊 肌肉部位容量佔比", "🏋️ 訓練總容量趨勢"]:
-        only_effective = st.checkbox("🎯 僅篩選高強度有效組 (RPE ≥ 8.0)", value=False)
+    if analysis_option in ["📊 肌肉部位容量與有效組數 (肌肥大指標)", "🏋️ 訓練總容量趨勢"]:
+        only_effective = st.checkbox("🎯 容量計算僅篩選高強度組 (RPE ≥ 8.0)", value=False)
 
     if analysis_option == "⚖️ 體態與熱量分析 (含 7 日均線)":
         st.header("⚖️ 體態與熱量分析")
@@ -472,25 +473,78 @@ with tab_analytics:
         else:
             st.info("💡 需要同時擁有「飲食紀錄」與「體重紀錄」才能解鎖分析圖表！")
 
-    elif analysis_option == "📊 肌肉部位容量佔比":
-        st.header("📊 肌肉部位容量佔比")
+    elif analysis_option == "📊 肌肉部位容量與有效組數 (肌肥大指標)":
+        st.header("📊 肌肉部位容量與有效組數")
         if st.session_state.workout_entries:
-            muscle_data = {m: 0.0 for m in MUSCLE_GROUPS.keys()}
+            # 1. 總容量計算字典
+            muscle_vol_data = {m: 0.0 for m in MUSCLE_GROUPS.keys()}
+            # 2. 近 7 日有效組數計算字典 (Hard Sets)
+            hard_sets_data = {m: 0 for m in MUSCLE_GROUPS.keys()}
+            
+            today = pd.to_datetime(datetime.now().date())
+            seven_days_ago = today - pd.Timedelta(days=7)
+            
             has_valid_data = False
             
             for w in st.session_state.workout_entries:
                 if w.get("weight", 0) > 0 and w.get("sets", 0) > 0 and w.get("reps", 0) > 0:
-                    if only_effective and w.get("rpe", 8.0) < 8.0:
-                        continue
+                    rpe = w.get("rpe", 8.0)
                     vol = w["weight"] * w["sets"] * w["reps"]
                     day_type = w.get("dayType", "Other")
-                    for muscle in WORKOUT_MUSCLE_MAPPING.get(day_type, []):
-                        if muscle in muscle_data:
-                            muscle_data[muscle] += vol
-                            has_valid_data = True
+                    w_date = pd.to_datetime(w["date"][:10])
+                    
+                    # 計算總容量
+                    if not (only_effective and rpe < 8.0):
+                        for muscle in WORKOUT_MUSCLE_MAPPING.get(day_type, []):
+                            if muscle in muscle_vol_data:
+                                muscle_vol_data[muscle] += vol
+                                has_valid_data = True
+                    
+                    # 🔥 計算近 7 日有效組 (強制過濾 RPE >= 8.0 且日期在最近 7 天)
+                    if rpe >= 8.0 and seven_days_ago <= w_date <= today:
+                        for muscle in WORKOUT_MUSCLE_MAPPING.get(day_type, []):
+                            if muscle in hard_sets_data:
+                                hard_sets_data[muscle] += w["sets"]
             
             if has_valid_data:
-                df_muscle = pd.DataFrame(list(muscle_data.items()), columns=['部位', '累積總容量 (kg)'])
+                # ==========================================
+                # 🔥 圖表 1：肌肥大核心 - 有效組數 (Hard Sets)
+                # ==========================================
+                st.subheader("🔥 近 7 日單部位有效組數 (Hard Sets)")
+                st.caption("肌肥大黃金區間：8~18組。超過 18 組可能進入垃圾容量並導致過度訓練。")
+                
+                sets_list = []
+                for m, s in hard_sets_data.items():
+                    status = "維持期 (<8組)" if s < 8 else ("黃金生長期 (8-18組)" if s <= 18 else "疲勞警戒 (>18組)")
+                    sets_list.append({"部位": m, "有效組數": s, "狀態": status})
+                
+                df_sets = pd.DataFrame(sets_list)
+                
+                color_scale = alt.Scale(
+                    domain=["維持期 (<8組)", "黃金生長期 (8-18組)", "疲勞警戒 (>18組)"],
+                    range=["#5C9DF5", "#2e7d32", "#FF4B4B"]  # 藍、綠、紅
+                )
+                
+                sets_chart = alt.Chart(df_sets).mark_bar().encode(
+                    x=alt.X('部位:O', title='肌肉部位', sort='-y'),
+                    y=alt.Y('有效組數:Q', title='近 7 日有效組數'),
+                    color=alt.Color('狀態:N', scale=color_scale),
+                    tooltip=['部位', '有效組數', '狀態']
+                )
+                
+                # 畫上科學輔助線 (8組 與 18組)
+                rule_18 = alt.Chart(pd.DataFrame({'y': [18]})).mark_rule(color='red', strokeDash=[5,5]).encode(y='y:Q')
+                rule_8 = alt.Chart(pd.DataFrame({'y': [8]})).mark_rule(color='orange', strokeDash=[5,5]).encode(y='y:Q')
+                
+                st.altair_chart(sets_chart + rule_18 + rule_8, use_container_width=True)
+                
+                st.divider()
+                
+                # ==========================================
+                # 📦 圖表 2：歷史累積總容量 (原有)
+                # ==========================================
+                st.subheader("📦 歷史累積總容量 (Tonnage)")
+                df_muscle = pd.DataFrame(list(muscle_vol_data.items()), columns=['部位', '累積總容量 (kg)'])
                 chart_df = pd.DataFrame({
                     "部位": df_muscle["部位"].astype(str),
                     "累積總容量": df_muscle["累積總容量 (kg)"].astype(float)
