@@ -1,3 +1,5 @@
+# views/workout.py
+
 import streamlit as st
 import uuid
 from datetime import datetime
@@ -45,6 +47,28 @@ def render():
 
     last_w, last_s, last_r = services.get_last_workout_data(st.session_state.workout_entries, selected_ex)
 
+    # ==========================================
+    # 🔥 優化二：%%1RM 自動配重輔助引擎 (置於表單外以利即時動態渲染)
+    # ==========================================
+    recommended_weight_val = float(last_w)
+    is_strength_workout = selected_day != "Cardio" and selected_ex not in ["跑步機", "戶外跑", "飛輪", "滑步機", "登階機", "跳繩"] and selected_ex != "➕ 新增動作..."
+    
+    if is_strength_workout:
+        max_1rm = 0.0
+        valid_history = [w for w in st.session_state.workout_entries if w.get('exercise') == selected_ex and w.get('weight', 0) > 0]
+        if valid_history:
+            max_1rm = max([services.estimate_1rm(w.get('weight', 0), w.get('reps', 0)) for w in valid_history])
+        
+        if max_1rm > 0:
+            st.subheader("🏋️ %1RM 自動配重輔助")
+            col_pct, col_calc = st.columns([2, 1])
+            with col_pct:
+                target_pct = st.slider("選擇今日目標訓練強度 (% 1RM)", min_value=40, max_value=100, value=80, step=5, help="40-60%: 爆發力與動態熱身 | 70-80%: 傳統肌肥大黃金區間 | 85%+: 絕對力量/高階神經徵召")
+            with col_calc:
+                # 健身房實務：四捨五入至最接近的 2.5 公斤槓片單位
+                recommended_weight_val = round((max_1rm * (target_pct / 100)) / 2.5) * 2.5
+                st.metric(label="推薦掛槓重量", value=f"{recommended_weight_val:.1f} kg", delta=f"預估1RM: {max_1rm:.1f}kg", delta_color="off")
+
     with st.form("workout_form", clear_on_submit=False):
         if selected_day == "Cardio" or selected_ex in ["跑步機", "戶外跑", "飛輪", "滑步機", "登階機", "跳繩"]:
             col1, col2 = st.columns(2)
@@ -66,7 +90,9 @@ def render():
         else:
             if last_s > 0: st.caption(f"💡 上次紀錄：{last_w}kg | {last_s}組 x {last_r}下")
             col1, col2, col3 = st.columns(3)
-            with col1: input_weight = st.number_input("重量 (kg)", min_value=0.0, step=2.5, value=float(last_w))
+            with col1: 
+                # 自動聯動：預設重量直接帶入上方動態計算出的推薦重量
+                input_weight = st.number_input("重量 (kg)", min_value=0.0, step=2.5, value=float(recommended_weight_val))
             with col2: input_sets = st.number_input("組數", min_value=0, step=1, value=int(last_s) if last_s > 0 else 4)
             with col3: input_reps = st.number_input("次數 (下)", min_value=0, step=1, value=int(last_r) if last_r > 0 else 8)
             
