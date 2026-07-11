@@ -9,6 +9,8 @@ from datetime import datetime
 import services
 from views import nutrition, workout, body, recover, history, analytics
 
+# 狀態安全初始化
+if "current_goal" not in st.session_state: st.session_state.current_goal = "🥩 增肌期 (Hypertrophy)"
 if "nutrition_entries" not in st.session_state: st.session_state.nutrition_entries = []
 if "workout_entries" not in st.session_state: st.session_state.workout_entries = []
 if "body_entries" not in st.session_state: st.session_state.body_entries = []
@@ -30,9 +32,21 @@ if "show_pr_balloons" in st.session_state and st.session_state.show_pr_balloons:
     st.success(st.session_state.new_pr_msg)
     st.session_state.show_pr_balloons = False
 
-# 側邊欄控制中樞 (已整合地下室斷網防護機制)
+# 側邊欄控制中樞
 with st.sidebar:
     st.header("⚙️ 系統控制中樞")
+    
+    # ─── 🔥 新增：大週期目標切換引擎 ───
+    st.subheader("🎯 當前週期目標")
+    goal_options = [
+        "🥩 增肌期 (Hypertrophy)", 
+        "⚡ 力量/爆發力期 (Strength/Power)", 
+        "🔥 減脂期 (Cutting)", 
+        "🩹 復健/活動度期 (Rehab)"
+    ]
+    st.session_state.current_goal = st.selectbox("切換大週期狀態", goal_options, index=0)
+    st.divider()
+    
     if st.session_state.unsynced:
         st.warning("系統有尚未同步的變更。", icon="⚠️")
     else:
@@ -49,7 +63,6 @@ with st.sidebar:
             st.session_state.unsynced = False
             st.rerun()
         else:
-            # 🛡️ 離線機制 UI 觸發：不崩潰、不重置，安全保留在本地端
             st.error("📡 訊號微弱連線失敗！已啟動【地下室離線防護】，數據已安全保存在本地記憶體中。回到地面後再次點擊即可同步！")
         
     st.divider()
@@ -60,8 +73,6 @@ with st.sidebar:
         "body_metrics": st.session_state.body_entries,
         "custom_exercises": st.session_state.custom_exercises
     }
-    
-    # 🔥 已經修復 Bug：將 json_backup 改回官方正確的 data 參數
     st.download_button(
         label="📥 下載完整資料庫 (JSON)", 
         data=json.dumps(backup_data, ensure_ascii=False, indent=2),
