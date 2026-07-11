@@ -394,7 +394,7 @@ with tab_hist:
                                     st.rerun()
 
 # ==========================================
-# 標籤頁：📈 數據 (🔥 深度量化升級)
+# 標籤頁：📈 數據 (🔥 強制型態安全鎖定)
 # ==========================================
 with tab_analytics:
     analysis_option = st.selectbox(
@@ -419,19 +419,20 @@ with tab_analytics:
             
             merged_df = pd.merge(daily_cal, df_b[['date_str', 'weight']], on='date_str', how='outer')
             merged_df = merged_df.sort_values('date_str')
-            merged_df['weight'] = merged_df['weight'].fillna(method='ffill').fillna(method='bfill').fillna(0)
-            merged_df['calories'] = merged_df['calories'].fillna(0)
             
-            # 🔥 新增：計算 7 日滾動平均線，平滑隨機雜訊
-            merged_df['weight_7d'] = merged_df['weight'].replace(0, pd.NA).rolling(window=7, min_periods=1).mean()
-            merged_df['cal_7d'] = merged_df['calories'].replace(0, pd.NA).rolling(window=7, min_periods=1).mean()
+            # 🔥 關鍵修復：強制轉為浮點數，再做 rolling
+            merged_df['weight'] = pd.to_numeric(merged_df['weight'], errors='coerce').bfill().ffill().fillna(0.0)
+            merged_df['calories'] = pd.to_numeric(merged_df['calories'], errors='coerce').fillna(0.0)
+            
+            merged_df['weight_7d'] = merged_df['weight'].replace(0.0, float('nan')).rolling(window=7, min_periods=1).mean()
+            merged_df['cal_7d'] = merged_df['calories'].replace(0.0, float('nan')).rolling(window=7, min_periods=1).mean()
             
             chart_df = pd.DataFrame({
                 "date_str": merged_df["date_str"].astype(str),
-                "單日熱量": merged_df["calories"].astype(float),
-                "7日平均熱量": merged_df["cal_7d"].astype(float),
-                "單日體重": merged_df["weight"].astype(float),
-                "7日平均體重": merged_df["weight_7d"].astype(float)
+                "單日熱量": merged_df["calories"].fillna(0).astype(float),
+                "7日平均熱量": merged_df["cal_7d"].fillna(0).astype(float),
+                "單日體重": merged_df["weight"].fillna(0).astype(float),
+                "7日平均體重": merged_df["weight_7d"].fillna(0).astype(float)
             })
             
             st.markdown("#### 攝取熱量 (kcal)")
@@ -518,22 +519,20 @@ with tab_analytics:
                 
                 df_track = df_weight_only[df_weight_only['exercise'] == selected_track_ex].copy()
                 df_track['date_str'] = df_track['date'].str[:10]
-                # 取每日最高 1RM 代表當日實力
                 df_daily_1rm = df_track.groupby('date_str')['estimated_1rm'].max().reset_index().sort_values('date_str')
                 
                 if not df_daily_1rm.empty:
-                    # 🔥 新增 1：升級為指數平滑移動平均 (EMA)，對近期表現更敏感
+                    # 強制轉為數值型態防止 ewm 當機
+                    df_daily_1rm['estimated_1rm'] = pd.to_numeric(df_daily_1rm['estimated_1rm'], errors='coerce')
                     df_daily_1rm['EMA (短期趨勢)'] = df_daily_1rm['estimated_1rm'].ewm(span=3, adjust=False).mean()
                     
-                    # 🔥 新增 2：純 Pandas 實作線性迴歸斜率 (防止 numpy 當機)
                     df_daily_1rm['x_index'] = range(len(df_daily_1rm))
                     slope = 0.0
                     if len(df_daily_1rm) > 1:
-                        cov = df_daily_1rm['estimated_1rm'].cov(df_daily_1rm['x_index'])
-                        var = df_daily_1rm['x_index'].var()
+                        cov = df_daily_1rm['estimated_1rm'].astype(float).cov(df_daily_1rm['x_index'].astype(float))
+                        var = df_daily_1rm['x_index'].astype(float).var()
                         slope = cov / var if var != 0 else 0.0
                     
-                    # 顯示動能儀表板
                     col_m1, col_m2, col_m3 = st.columns(3)
                     col_m1.metric(label="目前估算最高 1RM", value=f"{df_daily_1rm['estimated_1rm'].max():.1f} kg")
                     col_m2.metric(label="近期力量底線 (EMA)", value=f"{df_daily_1rm['EMA (短期趨勢)'].iloc[-1]:.1f} kg")
