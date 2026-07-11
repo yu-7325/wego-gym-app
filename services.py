@@ -238,16 +238,32 @@ def get_top_sfr_exercises(workout_entries):
     avg_sfr = {ex: sum(scores)/len(scores) for ex, scores in sfr_data.items() if len(scores) > 0}
     return sorted(avg_sfr.items(), key=lambda item: item[1], reverse=True)[:5]
 
-def calculate_dynamic_mrv(workout_entries, muscle_group):
-    base_mrv = 18.0
+# services.py 裡面的 calculate_dynamic_mrv 函數更新
+
+def calculate_dynamic_mrv(workout_entries, muscle_group, current_goal="🥩 增肌期 (Hypertrophy)"):
+    # ─── 🔥 根據大週期目標決定基礎 MRV 基準線 ───
+    if "力量" in current_goal:
+        base_mrv = 14.0  # 力量期強度極高、神經壓迫大，有效組數上限主動下調
+    elif "減脂" in current_goal:
+        base_mrv = 15.0  # 減脂期熱量赤字，身體修復速度變慢
+    elif "復健" in current_goal:
+        base_mrv = 8.0   # 復健期嚴格控管總容量，避免二次受傷
+    else:
+        base_mrv = 18.0  # 增肌期熱量充裕，維持黃金恢復上限 18 組
+    
+    # 結合原有的近期 RPE 疲勞監控
     history = [w for w in workout_entries if w.get('weight', 0) > 0 and w.get('dayType') != 'Cardio']
     relevant_rpes = []
     for w in history:
         day_type = w.get('dayType', '')
         if muscle_group in WORKOUT_MUSCLE_MAPPING.get(day_type, []):
              relevant_rpes.append(w.get('rpe', 8.0))
+             
     if len(relevant_rpes) >= 5:
         avg_recent_rpe = sum(relevant_rpes[-5:]) / 5
-        if avg_recent_rpe >= 8.5: return 15.0
-        elif avg_recent_rpe <= 7.0: return 22.0
+        if avg_recent_rpe >= 8.5: 
+            return max(base_mrv - 3.0, 6.0) # 疲勞累積嚴重，強行再砍 3 組
+        elif avg_recent_rpe <= 7.0 and "增肌" in current_goal: 
+            return base_mrv + 4.0 # 只有在增肌期且恢復完美時，才允許上調上限
+             
     return base_mrv
