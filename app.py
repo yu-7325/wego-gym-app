@@ -3,7 +3,7 @@
 import streamlit as st
 
 # ==========================================
-# 1. 網頁初始設定 (必須在最上方，防止 APIException)
+# 1. 網頁初始設定 (必須在最上方)
 # ==========================================
 st.set_page_config(page_title="We Go GYM", page_icon="🏋️", layout="centered")
 
@@ -128,7 +128,7 @@ with tab_work:
     st.header("新增訓練動作")
     selected_date_w = st.date_input("📝 選擇紀錄日期", datetime.now().date(), key="work_date")
     
-    st.session_state.active_routine = st.selectbox("當前執行課表", list(ROUTINE_PLANS.keys()), index=list(ROUTINE_PLANS.keys()).index(st.session_state.active_routine))
+    st.session_state.active_routine = st.selectbox("當前執行課表", list(ROUTINE_PLANS.keys()), index=list(ROUTINE_PLANS.keys()), label_visibility="visible")
     current_plan = ROUTINE_PLANS[st.session_state.active_routine]
     selected_day = st.selectbox("訓練日", current_plan["days"])
     
@@ -162,7 +162,7 @@ with tab_work:
             if st.form_submit_button("加入課表") and input_dur > 0 and selected_ex != "➕ 新增動作...":
                 entry_date = datetime.combine(selected_date_w, datetime.now().time()).isoformat()
                 st.session_state.workout_entries.append({
-                    "id": str(uuid.uuid4()), "date": entry_date, "dayType": selected_day, "exercise": selected_ex, "distance": input_dist, "duration": input_dur, "notes": input_notes, "weight": 0.0, "sets": 0, "reps": 0
+                    "id": str(uuid.uuid4()), "date": entry_date, "dayType": selected_day, "exercise": selected_ex, "distance": input_dist, "duration": input_dur, "notes": input_notes, "weight": 0.0, "sets": 0, "reps": 0, "rpe": 0.0
                 })
                 with st.spinner("同步至雲端中..."): trigger_save()
                 st.success("已加入有氧紀錄！")
@@ -173,6 +173,14 @@ with tab_work:
             with col1: input_weight = st.number_input("重量 (kg)", min_value=0.0, step=2.5, value=float(last_w))
             with col2: input_sets = st.number_input("組數", min_value=0, step=1, value=int(last_s) if last_s > 0 else 4)
             with col3: input_reps = st.number_input("次數 (下)", min_value=0, step=1, value=int(last_r) if last_r > 0 else 8)
+            
+            # 🔥 新增：RPE 強度選擇滑桿
+            input_rpe = st.select_slider(
+                "🎯 訓練強度 (RPE)",
+                options=[6.0, 6.5, 7.0, 7.5, 8.0, 8.5, 9.0, 9.5, 10.0],
+                value=8.0,
+                help="10: 推到極限，9: 還能推1下，8: 還能推2下 (保留次數RIR=2)"
+            )
                 
             if st.form_submit_button("加入課表") and input_sets > 0 and input_reps > 0 and selected_ex != "➕ 新增動作...":
                 entry_date = datetime.combine(selected_date_w, datetime.now().time()).isoformat()
@@ -189,7 +197,7 @@ with tab_work:
                     st.session_state.new_pr_msg = f"🏋️‍♂️ 突破天際！{selected_ex} 創下全新個人 PR！估算 1RM 達到 {current_estimated_1rm:.1f} kg (進步 {current_estimated_1rm - highest_prev_1rm:.1f} kg)！"
 
                 st.session_state.workout_entries.append({
-                    "id": str(uuid.uuid4()), "date": entry_date, "dayType": selected_day, "exercise": selected_ex, "weight": input_weight, "sets": input_sets, "reps": input_reps, "duration": None, "distance": None, "notes": None
+                    "id": str(uuid.uuid4()), "date": entry_date, "dayType": selected_day, "exercise": selected_ex, "weight": input_weight, "sets": input_sets, "reps": input_reps, "duration": None, "distance": None, "notes": None, "rpe": input_rpe
                 })
                 with st.spinner("同步至雲端中..."): trigger_save()
                 st.rerun()
@@ -216,7 +224,7 @@ with tab_work:
                     col_x, col_y, col_z = st.columns([3, 2, 1])
                     with col_x:
                         if row.get("duration") is not None: st.write(f"⏱️ {row['duration']:.0f} 分鐘" + (f" ({row['notes']})" if row.get('notes') else ""))
-                        else: st.write(f"🏋️ {row.get('weight', 0.0):.1f} kg")
+                        else: st.write(f"🏋️ {row.get('weight', 0.0):.1f} kg (RPE: {row.get('rpe', 8.0)})")
                     with col_y:
                         if row.get("duration") is not None: st.write(f"{row['distance']:.1f} km" if row.get('distance', 0) > 0 else "")
                         else: st.write(f"**{int(row.get('sets', 0))} 組 x {int(row.get('reps', 0))} 下**")
@@ -227,7 +235,7 @@ with tab_work:
                             st.rerun()
 
 # ==========================================
-# 標籤頁：⚖️ 體重
+# 6. 身體數值紀錄分頁 
 # ==========================================
 with tab_body:
     st.header("記錄身體數據")
@@ -267,7 +275,7 @@ with tab_body:
         st.write("尚未有身體紀錄。")
 
 # ==========================================
-# 標籤頁：💪 恢復
+# 7. 身體恢復圖 
 # ==========================================
 with tab_recover:
     st.header("人體恢復狀態儀表板")
@@ -286,13 +294,13 @@ with tab_recover:
         st.write("---")
 
 # ==========================================
-# 標籤頁：🕒 歷史
+# 8. 歷史記錄
 # ==========================================
 with tab_hist:
     hist_type = st.radio("選擇檢視歷史：", ["飲食紀錄", "重訓紀錄"], horizontal=True)
     
     if hist_type == "飲食紀錄":
-        if not st.session_state.nutrition_entries: st.write("Transient history is empty.")
+        if not st.session_state.nutrition_entries: st.write("尚未有任何飲食紀錄")
         else:
             grouped_n_hist = defaultdict(list)
             for e in st.session_state.nutrition_entries: grouped_n_hist[e['date'][:10]].append(e)
@@ -314,7 +322,7 @@ with tab_hist:
                                 with st.spinner("同步至雲端中..."): trigger_save()
                                 st.rerun()
     else:
-        if not st.session_state.workout_entries: st.write("Transient history is empty.")
+        if not st.session_state.workout_entries: st.write("尚未有任何訓練紀錄")
         else:
             grouped_w_hist = defaultdict(list)
             for e in st.session_state.workout_entries: grouped_w_hist[e['date'][:10]].append(e)
@@ -332,8 +340,9 @@ with tab_hist:
                         for row in ex_group:
                             col_x, col_y = st.columns([4, 1])
                             with col_x:
+                                rpe_str = f" | RPE: {row.get('rpe', 8.0)}" if row.get('weight', 0) > 0 else ""
                                 if row.get("duration") is not None: st.write(f"- ⏱️ {row['duration']:.0f} 分鐘" + (f" ({row['notes']})" if row.get('notes') else ""))
-                                else: st.write(f"- 🏋️ {row.get('weight',0.0):.1f} kg | {int(row.get('sets',0))} 組 x {int(row.get('reps',0))} 下")
+                                else: st.write(f"- 🏋️ {row.get('weight',0.0):.1f} kg | {int(row.get('sets',0))} 組 x {int(row.get('reps',0))} 下{rpe_str}")
                             with col_y:
                                 if st.button("❌", key=f"del_h_w_{row['id']}"):
                                     st.session_state.workout_entries = [e for e in st.session_state.workout_entries if e["id"] != row["id"]]
@@ -341,7 +350,7 @@ with tab_hist:
                                     st.rerun()
 
 # ==========================================
-# 9. 數據分析
+# 9. 數據分析 (🔥 整合 RPE 強度控制過濾器)
 # ==========================================
 with tab_analytics:
     analysis_option = st.selectbox(
@@ -349,6 +358,11 @@ with tab_analytics:
         ["⚖️ 體態與熱量分析", "📊 肌肉部位容量佔比", "🏆 1RM PR 榮譽榜與力量趨勢", "🏋️ 訓練總容量趨勢"]
     )
     st.divider()
+
+    # 🔥 全域過濾器開關（只對重訓相關圖表生效）
+    only_effective = False
+    if analysis_option in ["📊 肌肉部位容量佔比", "🏋️ 訓練總容量趨勢"]:
+        only_effective = st.checkbox("🎯 僅篩選高強度有效組 (RPE ≥ 8.0)", value=False, help="開啟後，圖表將自動過濾並扣除 RPE 低於 8.0 的熱身組與輕重量組")
 
     if analysis_option == "⚖️ 體態與熱量分析":
         st.header("⚖️ 體態與熱量分析")
@@ -397,6 +411,9 @@ with tab_analytics:
             
             for w in st.session_state.workout_entries:
                 if w.get("weight", 0) > 0 and w.get("sets", 0) > 0 and w.get("reps", 0) > 0:
+                    # 🔥 檢查 RPE 條件
+                    if only_effective and w.get("rpe", 8.0) < 8.0:
+                        continue
                     vol = w["weight"] * w["sets"] * w["reps"]
                     day_type = w.get("dayType", "Other")
                     for muscle in WORKOUT_MUSCLE_MAPPING.get(day_type, []):
@@ -418,7 +435,7 @@ with tab_analytics:
                 )
                 st.altair_chart(muscle_chart, use_container_width=True)
             else:
-                st.write("目前尚無重量訓練數據可供分析。")
+                st.write("目前尚無符合篩選條件的重訓數據。")
         else:
             st.write("目前尚無任何訓練數據。")
 
@@ -485,11 +502,15 @@ with tab_analytics:
         if st.session_state.workout_entries:
             df_w = pd.DataFrame(st.session_state.workout_entries)
             
-            for col in ['weight', 'sets', 'reps', 'date']:
+            for col in ['weight', 'sets', 'reps', 'date', 'rpe']:
                 if col not in df_w.columns:
-                    df_w[col] = 0.0 if col in ['weight', 'sets', 'reps'] else ""
+                    df_w[col] = 0.0 if col in ['weight', 'sets', 'reps', 'rpe'] else ""
+            
+            # 🔥 檢查 RPE 條件
+            if only_effective:
+                df_w = df_w[df_w['rpe'] >= 8.0]
                     
-            if 'weight' in df_w.columns and not df_w[df_w['weight'] > 0].empty:
+            if not df_w.empty and 'weight' in df_w.columns and not df_w[df_w['weight'] > 0].empty:
                 df_weights = df_w[df_w['weight'] > 0].copy()
                 time_interval = st.radio("選擇檢視區間：", ["日 (Daily)", "週 (Weekly)", "月 (Monthly)"], horizontal=True)
                 df_weights['date_obj'] = pd.to_datetime(df_weights['date'].str[:10])
@@ -519,4 +540,4 @@ with tab_analytics:
                 )
                 st.altair_chart(vol_chart, use_container_width=True)
             else:
-                st.write("目前尚無重量訓練數據可供分析。")
+                st.write("目前尚無符合篩選條件的重量訓練數據。")
