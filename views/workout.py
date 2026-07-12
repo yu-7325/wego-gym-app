@@ -21,13 +21,11 @@ def interactive_workout_panel(selected_ex, selected_day, selected_date_w, last_w
         if max_1rm > 0:
             with st.expander("🧮 展開 %1RM 智慧配重試算機", expanded=False):
                 col_pct, col_calc = st.columns([2, 1])
-                
-                # ─── 🔥 根據側邊欄大週期目標，自動預設最佳強度滑桿 ───
                 current_goal = st.session_state.get("current_goal", "🥩 增肌期 (Hypertrophy)")
                 if "力量" in current_goal: default_pct = 85
                 elif "減脂" in current_goal: default_pct = 75
                 elif "復健" in current_goal: default_pct = 50
-                else: default_pct = 80 # 增肌期
+                else: default_pct = 80 
                 
                 with col_pct:
                     target_pct = st.slider("今日目標強度 (% 1RM)", min_value=40, max_value=100, value=default_pct, step=5)
@@ -67,6 +65,7 @@ def interactive_workout_panel(selected_ex, selected_day, selected_date_w, last_w
                 with col_p2: input_pain = st.slider("關節不適/疼痛感", min_value=1.0, max_value=5.0, value=1.0, step=1.0)
                 
             if st.form_submit_button("送出紀錄本組數據", type="primary", use_container_width=True) and input_sets > 0 and input_reps > 0 and selected_ex != "➕ 新增動作...":
+                # 取得當前時間作為排序依據
                 entry_date = datetime.combine(selected_date_w, datetime.now().time()).isoformat()
                 
                 highest_prev_1rm = 0.0
@@ -87,8 +86,7 @@ def interactive_workout_panel(selected_ex, selected_day, selected_date_w, last_w
 
 def render():
     st.header("🏋️ 訓練課表紀錄")
-    # ─── 顯示當前大週期動態狀態 ───
-    st.caption(f"當前大周期戰術配置：`{st.session_state.current_goal}`")
+    st.caption(f"當前大週期戰術配置：`{st.session_state.current_goal}`")
     
     selected_date_w = st.date_input("📝 選擇紀錄日期", datetime.now().date(), key="work_date")
     
@@ -132,10 +130,14 @@ def render():
     st.divider()
     target_date_w_str = selected_date_w.strftime("%Y-%m-%d")
     today_work = [e for e in st.session_state.workout_entries if e["date"].startswith(target_date_w_str)]
-    st.subheader(f"📋 今日已存課表清單")
+    
+    # 按照時間排序，確保多組動作依照輸入順序顯示
+    today_work = sorted(today_work, key=lambda x: x["date"]) 
+
+    st.subheader(f"📋 當日已存課表清單")
     
     if not today_work:
-        st.caption("今日尚未有動作紀錄。")
+        st.caption("所選日期尚未有動作紀錄。")
     else:
         grouped_work = defaultdict(list)
         for w in today_work: grouped_work[w.get('dayType', 'Other')].append(w)
@@ -143,20 +145,25 @@ def render():
             st.markdown(f"##### 🧱 {day}")
             grouped_ex = defaultdict(list)
             for w in group: grouped_ex[w.get('exercise', 'Unknown')].append(w)
+            
             for ex, ex_group in grouped_ex.items():
-                with st.container():
-                    col_x, col_y, col_z = st.columns([3, 2, 0.8])
-                    with col_x:
-                        st.markdown(f"**{ex}**")
-                        row = ex_group[0]
-                        if row.get("duration") is not None: st.caption(f"⏱️ {row['duration']:.0f} 分鐘" + (f" ({row['notes']})" if row.get('notes') else ""))
-                        else: st.caption(f"🏋️ {row.get('weight', 0.0):.1f} kg · `RPE: {row.get('rpe', 8.0)}`")
-                    with col_y:
-                        st.write("") 
-                        if row.get("duration") is not None: st.write(f"{row['distance']:.1f} km" if row.get('distance', 0) > 0 else "")
-                        else: st.markdown(f"`{int(row.get('sets', 0))}組` x `{int(row.get('reps', 0))}下`")
-                    with col_z:
-                        if st.button("❌", key=f"del_work_{row['id']}", use_container_width=True):
-                            st.session_state.workout_entries = [e for e in st.session_state.workout_entries if e["id"] != row["id"]]
-                            st.session_state.unsynced = True
-                            st.rerun()
+                st.markdown(f"**{ex}**") # 動作名稱只顯示一次
+                # 🔥 修正 Bug：迭代該動作的所有組數，而不是只抓第一組
+                for row in ex_group:
+                    with st.container():
+                        col_x, col_y, col_z = st.columns([3, 2, 0.8])
+                        with col_x:
+                            if row.get("duration") is not None: 
+                                st.caption(f"⏱️ {row['duration']:.0f} 分鐘" + (f" ({row['notes']})" if row.get('notes') else ""))
+                            else: 
+                                st.caption(f"🏋️ {row.get('weight', 0.0):.1f} kg · `RPE: {row.get('rpe', 8.0)}`")
+                        with col_y:
+                            if row.get("duration") is not None: 
+                                st.write(f"{row['distance']:.1f} km" if row.get('distance', 0) > 0 else "")
+                            else: 
+                                st.markdown(f"`{int(row.get('sets', 0))}組` x `{int(row.get('reps', 0))}下`")
+                        with col_z:
+                            if st.button("❌", key=f"del_work_{row['id']}", use_container_width=True):
+                                st.session_state.workout_entries = [e for e in st.session_state.workout_entries if e["id"] != row["id"]]
+                                st.session_state.unsynced = True
+                                st.rerun()
