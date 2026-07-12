@@ -18,6 +18,9 @@ if "custom_exercises" not in st.session_state: st.session_state.custom_exercises
 if "active_routine" not in st.session_state: st.session_state.active_routine = "4日力量與有氧 (目前)"
 if "unsynced" not in st.session_state: st.session_state.unsynced = False
 
+# 🔥 新增：預設記憶分頁，鎖定在課表頁面
+if "active_tab" not in st.session_state: st.session_state.active_tab = "🏋️ 課表"
+
 if "data_loaded" not in st.session_state:
     with st.spinner("🔄 正在與 Google 雲端資料庫同步中..."):
         data = services.load_data()
@@ -32,11 +35,9 @@ if "show_pr_balloons" in st.session_state and st.session_state.show_pr_balloons:
     st.success(st.session_state.new_pr_msg)
     st.session_state.show_pr_balloons = False
 
-# 側邊欄控制中樞
 with st.sidebar:
     st.header("⚙️ 系統控制中樞")
     
-    # ─── 🔥 新增：大週期目標切換引擎 ───
     st.subheader("🎯 當前週期目標")
     goal_options = [
         "🥩 增肌期 (Hypertrophy)", 
@@ -44,7 +45,9 @@ with st.sidebar:
         "🔥 減脂期 (Cutting)", 
         "🩹 復健/活動度期 (Rehab)"
     ]
-    st.session_state.current_goal = st.selectbox("切換大週期狀態", goal_options, index=0)
+    # 確保不會因為目標變動而報錯
+    current_idx = goal_options.index(st.session_state.current_goal) if st.session_state.current_goal in goal_options else 0
+    st.session_state.current_goal = st.selectbox("切換大週期狀態", goal_options, index=current_idx)
     st.divider()
     
     if st.session_state.unsynced:
@@ -85,13 +88,15 @@ st.title("We Go GYM ☁️")
 if st.session_state.unsynced:
     st.info("💡 提示：您有尚未同步的紀錄，訓練結束後請打開左上角選單 `>` 進行雲端同步！", icon="💾")
 
-tab_nutri, tab_work, tab_body, tab_recover, tab_hist, tab_analytics = st.tabs([
-    "🍃 飲食", "🏋️ 課表", "⚖️ 體重", "💪 恢復", "🕒 歷史", "📈 數據"
-])
+# ─── 🔥 核心修復：綁定 Session State 的防跳脫導覽列 ───
+tab_options = ["🍃 飲食", "🏋️ 課表", "⚖️ 體重", "💪 恢復", "🕒 歷史", "📈 數據"]
+selected_tab = st.radio("導覽列", tab_options, horizontal=True, label_visibility="collapsed", key="active_tab")
+st.divider()
 
-with tab_nutri: nutrition.render()
-with tab_work: workout.render()
-with tab_body: body.render()
-with tab_recover: recover.render()
-with tab_hist: history.render()
-with tab_analytics: analytics.render()
+# 根據導覽列狀態渲染對應視圖
+if selected_tab == "🍃 飲食": nutrition.render()
+elif selected_tab == "🏋️ 課表": workout.render()
+elif selected_tab == "⚖️ 體重": body.render()
+elif selected_tab == "💪 恢復": recover.render()
+elif selected_tab == "🕒 歷史": history.render()
+elif selected_tab == "📈 數據": analytics.render()
