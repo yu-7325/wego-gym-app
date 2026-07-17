@@ -1,0 +1,10 @@
+[server]
+# 延長伺服器與手機之間的心跳檢測間隔（預設很短，容易斷線）
+serverWebsocketPingInterval = 60
+
+# 延長伺服器允許的超時等待時間（從原本的幾秒鐘放寬到 120 秒）
+serverWebsocketPingTimeout = 120
+
+[browser]
+# 強制瀏覽器在遇到短暫斷線時，不要立刻噴錯，而是默默在背景嘗試重連
+gatherUsageStats = false
