@@ -6,6 +6,7 @@ from datetime import datetime
 from PIL import Image
 import base64
 from io import BytesIO
+from collections import defaultdict  # 🔥 新增：用來分組的字典工具
 
 def process_image(uploaded_file):
     try:
@@ -13,8 +14,7 @@ def process_image(uploaded_file):
         img = Image.open(uploaded_file)
         img = img.convert("RGB")
         
-        # 🔥 黑科技壓縮：將長寬限制在 400px，畫質降低至 50
-        # 這樣能確保圖片轉成文字後，檔案極小，絕不會超過 Google Sheets 的 5 萬字元上限
+        # 黑科技壓縮：將長寬限制在 400px，畫質降低至 50
         img.thumbnail((400, 400))
         buffered = BytesIO()
         img.save(buffered, format="JPEG", quality=50)
@@ -69,27 +69,43 @@ def render():
         filter_cat = st.radio("篩選分類", ["全部", "🏋️ 動作與課表", "🥗 飲食紀錄", "💪 體態與其他"], horizontal=True)
         if filter_cat != "全部":
             sorted_gallery = [e for e in sorted_gallery if e.get("category") == filter_cat]
-        
-        # 雙欄位瀑布流排版
-        cols = st.columns(2)
-        for idx, entry in enumerate(sorted_gallery):
-            col = cols[idx % 2]
-            with col:
-                st.markdown(f"**{entry.get('category')}**")
+            
+        if not sorted_gallery:
+            st.caption(f"尚無「{filter_cat}」的影像紀錄。")
+        else:
+            # 🔥 核心優化：按照日期分組 (Grouping)
+            grouped_gallery = defaultdict(list)
+            for entry in sorted_gallery:
+                date_str = entry["date"][:10]  # 只取 YYYY-MM-DD
+                grouped_gallery[date_str].append(entry)
                 
-                try:
-                    # 將 Base64 文字解碼回圖片顯示
-                    img_bytes = base64.b64decode(entry["image_base64"])
-                    st.image(img_bytes, use_column_width=True)
-                except:
-                    st.error("圖片載入失敗")
+            # 將分組後的資料用 Expander 摺疊顯示
+            for date_str in sorted(grouped_gallery.keys(), reverse=True):
+                images_in_date = grouped_gallery[date_str]
+                
+                # 摺疊標題顯示日期與該日期的照片數量
+                with st.expander(f"📅 {date_str} (共 {len(images_in_date)} 張)", expanded=False):
                     
-                if entry.get("notes"):
-                    st.caption(f"📝 {entry['notes']}")
-                st.caption(f"📅 {entry['date'][:10]}")
-                
-                if st.button("❌ 刪除", key=f"del_img_{entry['id']}", use_container_width=True):
-                    st.session_state.gallery_entries = [e for e in st.session_state.gallery_entries if e["id"] != entry["id"]]
-                    st.session_state.unsynced = True
-                    st.rerun()
-                st.markdown("---")
+                    # 展開後依然保持雙欄位顯示，節省空間
+                    cols = st.columns(2)
+                    for idx, entry in enumerate(images_in_date):
+                        col = cols[idx % 2]
+                        with col:
+                            st.markdown(f"**{entry.get('category')}**")
+                            
+                            try:
+                                # 將 Base64 文字解碼回圖片顯示
+                                img_bytes = base64.b64decode(entry["image_base64"])
+                                st.image(img_bytes, use_column_width=True)
+                            except:
+                                st.error("圖片載入失敗")
+                                
+                            if entry.get("notes"):
+                                st.caption(f"📝 {entry['notes']}")
+                            
+                            if st.button("❌ 刪除", key=f"del_img_{entry['id']}", use_container_width=True):
+                                st.session_state.gallery_entries = [e for e in st.session_state.gallery_entries if e["id"] != entry["id"]]
+                                st.session_state.unsynced = True
+                                st.rerun()
+                            
+                            st.divider() # 在同一欄位內的照片之間加上分隔線
