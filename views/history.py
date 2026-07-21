@@ -7,7 +7,8 @@ import services
 def trigger_save():
     services.save_data(
         st.session_state.nutrition_entries, st.session_state.workout_entries,
-        st.session_state.body_entries, st.session_state.custom_exercises
+        st.session_state.body_entries, st.session_state.custom_exercises,
+        st.session_state.gallery_entries
     )
 
 def render():
@@ -27,9 +28,23 @@ def render():
                 with st.expander(f"📅 {date} | 總熱量: {total_c:.0f} kcal"):
                     st.markdown(f"**🔥 日總計 ➔ 碳水: {sum(e.get('carbs',0) for e in group):.1f}g | 蛋白質: {sum(e.get('protein',0) for e in group):.1f}g | 脂肪: {sum(e.get('fat',0) for e in group):.1f}g**")
                     st.divider()
+                    
+                    # 🔥 核心優化：按餐別分組與排序邏輯
+                    meals_in_day = defaultdict(list)
                     for row in group:
-                        st.markdown(f"**{row['type']}**" + (f" - {row['foodName']}" if row.get('foodName') else "") + f" : `{row.get('calories', 0):.0f} kcal`")
-                        st.caption(f"碳水: {row.get('carbs',0):.1f}g | 蛋白質: {row.get('protein',0):.1f}g | 脂肪: {row.get('fat',0):.1f}g")
+                        meals_in_day[row.get('type', '未分類')].append(row)
+                        
+                    # 確保按照真實進食時間點排序
+                    meal_order = {"早餐": 1, "午餐": 2, "晚餐": 3, "點心": 4, "練前餐": 5, "練後餐": 6}
+                    sorted_meals = sorted(meals_in_day.keys(), key=lambda x: meal_order.get(x, 99))
+                    
+                    for meal in sorted_meals:
+                        meal_items = meals_in_day[meal]
+                        st.markdown(f"##### 🍽️ {meal}") # 統一顯示大標題
+                        for row in meal_items:
+                            food_name = row.get('foodName', '未命名食物')
+                            st.markdown(f"**{food_name}** · `{row.get('calories', 0):.0f} kcal`")
+                            st.caption(f"碳水: {row.get('carbs',0):.1f}g | 蛋白質: {row.get('protein',0):.1f}g | 脂肪: {row.get('fat',0):.1f}g")
     else:
         if not st.session_state.workout_entries: st.write("尚未有任何訓練紀錄")
         else:
