@@ -59,7 +59,8 @@ def get_gsheet_client():
     return gspread.authorize(creds)
 
 def ensure_worksheets(sh):
-    expected_sheets = ["Nutrition", "Workout", "CustomExercises", "BodyMetrics"]
+    # 🔥 加入 Gallery 工作表
+    expected_sheets = ["Nutrition", "Workout", "CustomExercises", "BodyMetrics", "Gallery"]
     existing_sheets = [ws.title for ws in sh.worksheets()]
     for ws_name in expected_sheets:
         if ws_name not in existing_sheets:
@@ -99,8 +100,17 @@ def load_data():
         ex = r.get("exercise_name")
         if plan_day not in custom_dict: custom_dict[plan_day] = []
         custom_dict[plan_day].append(ex)
+        
+    # 🔥 載入圖庫資料
+    gallery_records = sh.worksheet("Gallery").get_all_records()
 
-    return {"nutrition": nutri_records, "workout": work_records, "body_metrics": body_records, "custom_exercises": custom_dict}
+    return {
+        "nutrition": nutri_records, 
+        "workout": work_records, 
+        "body_metrics": body_records, 
+        "custom_exercises": custom_dict,
+        "gallery": gallery_records
+    }
 
 def update_worksheet(ws, data_list, default_headers):
     ws.clear()
@@ -114,16 +124,21 @@ def update_worksheet(ws, data_list, default_headers):
         rows.append(row)
     ws.update([headers] + rows)
 
-# 🔥 更新：地下室離線防護機制 (雲端防當機核心)
-def save_data(nutrition_entries, workout_entries, body_entries, custom_exercises):
+# 🔥 更新：支援 gallery_entries 的寫入與地下室離線防護
+def save_data(nutrition_entries, workout_entries, body_entries, custom_exercises, gallery_entries):
     try:
         gc = get_gsheet_client()
         sh = gc.open(SHEET_NAME)
         update_worksheet(sh.worksheet("Nutrition"), nutrition_entries, ["id", "date", "type", "foodName", "protein", "carbs", "fat", "calories"])
         update_worksheet(sh.worksheet("Workout"), workout_entries, ["id", "date", "dayType", "exercise", "weight", "sets", "reps", "distance", "duration", "notes", "rpe", "pump", "joint_pain"])
         update_worksheet(sh.worksheet("BodyMetrics"), body_entries, ["id", "date", "weight", "body_fat"])
+        
         custom_list = [{"plan_day": pd, "exercise_name": ex} for pd, ex_list in custom_exercises.items() for ex in ex_list]
         update_worksheet(sh.worksheet("CustomExercises"), custom_list, ["plan_day", "exercise_name"])
+        
+        # 🔥 將圖庫資料寫入雲端
+        update_worksheet(sh.worksheet("Gallery"), gallery_entries, ["id", "date", "category", "image_base64", "notes"])
+        
         return True # 順利寫入雲端
     except Exception as e:
         # 🛡️ 觸發斷網防護：在記憶體中安全保留，不噴出紅色報錯畫面，回傳 False 讓前端提示
@@ -237,8 +252,6 @@ def get_top_sfr_exercises(workout_entries):
         sfr_data[ex].append(sfr)
     avg_sfr = {ex: sum(scores)/len(scores) for ex, scores in sfr_data.items() if len(scores) > 0}
     return sorted(avg_sfr.items(), key=lambda item: item[1], reverse=True)[:5]
-
-# services.py 裡面的 calculate_dynamic_mrv 函數更新
 
 def calculate_dynamic_mrv(workout_entries, muscle_group, current_goal="🥩 增肌期 (Hypertrophy)"):
     # ─── 🔥 根據大週期目標決定基礎 MRV 基準線 ───
