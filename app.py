@@ -7,7 +7,8 @@ st.set_page_config(page_title="We Go GYM", page_icon="🏋️", layout="centered
 import json
 from datetime import datetime
 import services
-from views import nutrition, workout, body, recover, history, analytics
+# 🔥 記得導入最新的 gallery 模組
+from views import nutrition, workout, body, recover, history, analytics, gallery
 
 # 狀態安全初始化
 if "current_goal" not in st.session_state: st.session_state.current_goal = "🥩 增肌期 (Hypertrophy)"
@@ -15,10 +16,12 @@ if "nutrition_entries" not in st.session_state: st.session_state.nutrition_entri
 if "workout_entries" not in st.session_state: st.session_state.workout_entries = []
 if "body_entries" not in st.session_state: st.session_state.body_entries = []
 if "custom_exercises" not in st.session_state: st.session_state.custom_exercises = {}
+# 🔥 初始化圖庫狀態
+if "gallery_entries" not in st.session_state: st.session_state.gallery_entries = []
 if "active_routine" not in st.session_state: st.session_state.active_routine = "4日力量與有氧 (目前)"
 if "unsynced" not in st.session_state: st.session_state.unsynced = False
 
-# 🔥 新增：預設記憶分頁，鎖定在課表頁面
+# 預設記憶分頁，鎖定在課表頁面
 if "active_tab" not in st.session_state: st.session_state.active_tab = "🏋️ 課表"
 
 if "data_loaded" not in st.session_state:
@@ -28,6 +31,8 @@ if "data_loaded" not in st.session_state:
         st.session_state.workout_entries = data.get("workout", [])
         st.session_state.body_entries = data.get("body_metrics", [])
         st.session_state.custom_exercises = data.get("custom_exercises", {})
+        # 🔥 載入圖庫資料
+        st.session_state.gallery_entries = data.get("gallery", [])
         st.session_state.data_loaded = True
 
 if "show_pr_balloons" in st.session_state and st.session_state.show_pr_balloons:
@@ -58,8 +63,11 @@ with st.sidebar:
     if st.button("🔄 手動同步至雲端", type="primary", use_container_width=True):
         with st.spinner("正在安全打包數據上傳 Google Sheets..."):
             success = services.save_data(
-                st.session_state.nutrition_entries, st.session_state.workout_entries,
-                st.session_state.body_entries, st.session_state.custom_exercises
+                st.session_state.nutrition_entries, 
+                st.session_state.workout_entries,
+                st.session_state.body_entries, 
+                st.session_state.custom_exercises,
+                st.session_state.gallery_entries  # 🔥 將圖庫資料一起打包上傳
             )
         if success:
             st.toast("☁️ 雲端備份成功！", icon="✅")
@@ -74,7 +82,8 @@ with st.sidebar:
         "nutrition": st.session_state.nutrition_entries,
         "workout": st.session_state.workout_entries,
         "body_metrics": st.session_state.body_entries,
-        "custom_exercises": st.session_state.custom_exercises
+        "custom_exercises": st.session_state.custom_exercises,
+        "gallery": st.session_state.gallery_entries  # 🔥 確保 JSON 備份檔也包含圖片編碼
     }
     st.download_button(
         label="📥 下載完整資料庫 (JSON)", 
@@ -88,8 +97,9 @@ st.title("We Go GYM ☁️")
 if st.session_state.unsynced:
     st.info("💡 提示：您有尚未同步的紀錄，訓練結束後請打開左上角選單 `>` 進行雲端同步！", icon="💾")
 
-# ─── 🔥 核心修復：綁定 Session State 的防跳脫導覽列 ───
-tab_options = ["🍃 飲食", "🏋️ 課表", "⚖️ 體重", "💪 恢復", "🕒 歷史", "📈 數據"]
+# ─── 綁定 Session State 的防跳脫導覽列 ───
+# 🔥 加入 "📷 影像" 選項
+tab_options = ["🍃 飲食", "🏋️ 課表", "⚖️ 體重", "💪 恢復", "🕒 歷史", "📈 數據", "📷 影像"]
 selected_tab = st.radio("導覽列", tab_options, horizontal=True, label_visibility="collapsed", key="active_tab")
 st.divider()
 
@@ -100,3 +110,4 @@ elif selected_tab == "⚖️ 體重": body.render()
 elif selected_tab == "💪 恢復": recover.render()
 elif selected_tab == "🕒 歷史": history.render()
 elif selected_tab == "📈 數據": analytics.render()
+elif selected_tab == "📷 影像": gallery.render()  # 🔥 渲染圖庫視圖
